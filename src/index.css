@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme CSS Custom Properties */
+:root {
+  /* Default Theme (Original Dark) */
+  --bg-main: #0d1117;
+  --bg-card: #161b22;
+  --primary: #2A9D8F;
+  --primary-hover: #268e81;
+  --primary-light: rgba(42, 157, 143, 0.1);
+  --secondary: #A8DADC;
+  --accent: #e9c46a;
+  --negative: #EF8354;
+  --positive: #2A9D8F;
+  --text-heading: #e6edf3;
+  --text-body: #8b949e;
+  --text-muted: #6e7681;
+  --border: #30363d;
+  --border-light: #21262d;
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  --shadow-primary: rgba(42, 157, 143, 0.2);
+}
+
+/* Cerulean Blue Theme */
+.theme-cerulean {
+  --bg-main: #F0F4F8;
+  --bg-card: #FFFFFF;
+  --primary: #3E92CC;
+  --primary-hover: #357FB5;
+  --primary-light: rgba(62, 146, 204, 0.1);
+  --secondary: #7EC8E3;
+  --accent: #F7B267;
+  --negative: #F28482;
+  --positive: #4CAF9A;
+  --text-heading: #1D3557;
+  --text-body: #457B9D;
+  --text-muted: #7A9CC6;
+  --border: #E1E8ED;
+  --border-light: #F0F4F8;
+  --shadow-color: rgba(62, 146, 204, 0.08);
+  --shadow-primary: rgba(62, 146, 204, 0.15);
+}
+
+/* Earthy Sage Theme */
+.theme-sage {
+  --bg-main: #FAFAF9;
+  --bg-card: #FFFFFF;
+  --primary: #8A9A5B;
+  --primary-hover: #7A8A4B;
+  --primary-light: rgba(138, 154, 91, 0.1);
+  --secondary: #E6D5B8;
+  --accent: #D4A574;
+  --negative: #E07A5F;
+  --positive: #8A9A5B;
+  --text-heading: #4A403A;
+  --text-body: #7D7C7A;
+  --text-muted: #A09E9B;
+  --border: #E8E6E3;
+  --border-light: #F5F4F2;
+  --shadow-color: rgba(74, 64, 58, 0.08);
+  --shadow-primary: rgba(138, 154, 91, 0.15);
+}
+
+/* Deep Forest Theme */
+.theme-forest {
+  --bg-main: #0c1410;
+  --bg-card: #182620;
+  --primary: #7FB989;
+  --primary-hover: #6FA879;
+  --primary-light: rgba(127, 185, 137, 0.1);
+  --secondary: #D4B483;
+  --accent: #D4B483;
+  --negative: #D17C64;
+  --positive: #7FB989;
+  --text-heading: #E8E6D9;
+  --text-body: #9CA8A0;
+  --text-muted: #6B7A72;
+  --border: #2C3E34;
+  --border-light: #1E2E26;
+  --shadow-color: #050d08;
+  --shadow-primary: rgba(127, 185, 137, 0.15);
+}
+
+/* Apply theme background to body */
+body {
+  background-color: var(--bg-main);
+  transition: background-color 0.3s ease;
+}
