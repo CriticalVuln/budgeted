@@ -3852,10 +3852,10 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                     })()}
 
                     {isAnalyzing ? (
-                        <div className="flex flex-col items-center justify-center py-12">
-                            <div className="relative w-16 h-16 mb-4">
-                                <div className="absolute inset-0 border-4 border-[#2A9D8F]/20 rounded-full"></div>
-                                <div className="absolute inset-0 border-4 border-[#2A9D8F] rounded-full border-t-transparent animate-spin"></div>
+                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                            <div className="relative">
+                                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse rounded-full"></div>
+                                <Sparkles size={48} className="text-indigo-500 animate-bounce relative z-10" />
                             </div>
                             <p className="text-sm font-bold text-slate-600 dark:text-slate-300">Analyzing your finances...</p>
                             <p className="text-xs text-slate-400 mt-1">This may take a few moments</p>

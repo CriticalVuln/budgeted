@@ -6,3 +6,5 @@ build/
 *.zip
 .DS_Store
 .vscode/
+
+data/

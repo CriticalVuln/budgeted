@@ -471,7 +471,7 @@ Provide a comprehensive, expert-level analysis of this portfolio. Focus on:
 
 Be critical, specific, and data-driven. Reference the EXACT numbers provided above.`;
 
-        console.log("Analysis Prompt:", prompt);
+
         return prompt;
     };
 
@@ -831,7 +831,10 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
                     >
                         <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
                         <div className="relative flex items-center gap-2">
-                            <Sparkles size={18} className={isAnalyzing ? "animate-spin" : "animate-pulse"} />
+                            <div className="relative">
+                                <div className="absolute inset-0 bg-white blur-md opacity-40 animate-pulse rounded-full"></div>
+                                <Sparkles size={18} className={`relative z-10 ${isAnalyzing ? "animate-spin" : "animate-bounce"}`} />
+                            </div>
                             <span>{isAnalyzing ? "Analyzing..." : "Expert Analysis"}</span>
                         </div>
                     </button>
