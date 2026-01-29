@@ -977,8 +977,8 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
 
     const width = 1200;
     const nodeWidth = 12;
-    const paddingLeft = 160;
-    const paddingRight = 220;
+    const paddingLeft = 190;
+    const paddingRight = 190;
     const levelSpacing = (width - paddingLeft - paddingRight) / 3;
 
     const vizNodes = useMemo(() => {
@@ -3800,7 +3800,7 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                             placeholder={`Enter your ${aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : 'OpenAI'} API key`}
                             className="w-full bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border-none ring-1 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-[#2A9D8F] outline-none transition-colors duration-500 font-mono text-sm"
                         />
-                        <p className="text-[10px] text-slate-500 mt-2">Your API key is stored locally and never sent to our servers.</p>
+                        <p className="text-[10px] text-slate-500 mt-2">Your API key is stored <strong>locally on your device</strong> and is never sent to our servers.</p>
                     </div>
 
                     <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
