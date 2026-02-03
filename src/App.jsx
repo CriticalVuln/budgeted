@@ -1058,49 +1058,134 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
         );
     }
 
+    // --- Magnifying Glass Logic ---
+    const [zoomState, setZoomState] = useState({ x: 0, y: 0, active: false });
+    const svgRef = React.useRef(null);
+
+    const handleMouseMove = (e) => {
+        if (!svgRef.current) return;
+        const pt = svgRef.current.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const svgP = pt.matrixTransform(svgRef.current.getScreenCTM().inverse());
+        setZoomState({ x: svgP.x, y: svgP.y, active: true });
+    };
+
+    const handleMouseLeave = () => {
+        setZoomState(prev => ({ ...prev, active: false }));
+    };
+
+    // Helper to render chart content (nodes + links)
+    const renderChartContent = () => (
+        <>
+            {vizLinks.map((link, i) => (
+                <path
+                    key={i}
+                    d={link.path}
+                    fill={link.color}
+                    className="transition-all duration-300 hover:fill-opacity-50 cursor-help"
+                >
+                    <title>{`${link.value.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}`}</title>
+                </path>
+            ))}
+            {Object.values(vizNodes).map(node => (
+                <g key={node.id} className="group">
+                    <rect
+                        x={node.x}
+                        y={node.y}
+                        width={nodeWidth}
+                        height={node.height}
+                        fill={node.color}
+                        rx="2"
+                        className="shadow-sm"
+                    />
+                    <text
+                        x={node.level < 2 ? node.x - 12 : node.x + nodeWidth + 12}
+                        y={node.y + node.height / 2 - 2}
+                        textAnchor={node.level < 2 ? "end" : "start"}
+                        alignmentBaseline="auto"
+                        className="text-xs font-black uppercase tracking-widest fill-slate-500 dark:fill-slate-400 transition-colors group-hover:fill-slate-900 dark:group-hover:fill-white"
+                    >
+                        {node.label}
+                    </text>
+                    <text
+                        x={node.level < 2 ? node.x - 12 : node.x + nodeWidth + 12}
+                        y={node.y + node.height / 2 + 10}
+                        textAnchor={node.level < 2 ? "end" : "start"}
+                        className="text-[11px] font-bold fill-slate-300 dark:fill-slate-600"
+                    >
+                        ${node.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </text>
+                </g>
+            ))}
+        </>
+    );
+
+    if (totalVolume <= 1) {
+        return (
+            <div className="min-h-[350px] flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800">
+                <Banknote className="text-slate-300 mb-4" size={48} />
+                <p className="text-slate-400 font-medium">Add income and expenses to see your cash flow.</p>
+            </div>
+        );
+    }
+
     return (
         <div className="w-full relative pb-6 overflow-hidden rounded-xl bg-slate-50/50 dark:bg-slate-900/20 border border-slate-100 dark:border-slate-800">
-            <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height: `${height}px` }} preserveAspectRatio="xMidYMid meet">
-                {vizLinks.map((link, i) => (
-                    <path
-                        key={i}
-                        d={link.path}
-                        fill={link.color}
-                        className="transition-all duration-300 hover:fill-opacity-50 cursor-help"
-                    >
-                        <title>{`${link.value.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}`}</title>
-                    </path>
-                ))}
-                {Object.values(vizNodes).map(node => (
-                    <g key={node.id} className="group">
-                        <rect
-                            x={node.x}
-                            y={node.y}
-                            width={nodeWidth}
-                            height={node.height}
-                            fill={node.color}
-                            rx="2"
-                            className="shadow-sm"
+            <svg
+                ref={svgRef}
+                viewBox={`0 0 ${width} ${height}`}
+                className="w-full cursor-none"
+                style={{ height: `${height}px` }}
+                preserveAspectRatio="xMidYMid meet"
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+            >
+                <defs>
+                    <clipPath id="glass-clip">
+                        <circle cx={zoomState.x} cy={zoomState.y} r={150} />
+                    </clipPath>
+                    {/* Optional: Drop shadow for the glass rim */}
+                    <filter id="glass-shadow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#000" floodOpacity="0.3" />
+                    </filter>
+                </defs>
+
+                {/* 1. Base Layer: Normal Chart */}
+                {renderChartContent()}
+
+                {/* 2. Magnifying Glass Overlay */}
+                {zoomState.active && (
+                    <g className="pointer-events-none">
+                        {/* The zoomed content, clipped to the circle */}
+                        <g clipPath="url(#glass-clip)">
+                            <g transform={`translate(${zoomState.x}, ${zoomState.y}) scale(2) translate(-${zoomState.x}, -${zoomState.y})`}>
+                                {/* Background for the glass to hide underlying elements and simulate proper lens */}
+                                <rect x={zoomState.x - 150} y={zoomState.y - 150} width="300" height="300" fill="var(--bg-card)" opacity="0.95" />
+                                {renderChartContent()}
+                            </g>
+                        </g>
+
+                        {/* The glass rim/border */}
+                        <circle
+                            cx={zoomState.x}
+                            cy={zoomState.y}
+                            r={150}
+                            fill="none"
+                            stroke="var(--border)"
+                            strokeWidth="4"
+                            style={{ filter: 'url(#glass-shadow)' }}
                         />
-                        <text
-                            x={node.level < 2 ? node.x - 12 : node.x + nodeWidth + 12}
-                            y={node.y + node.height / 2 - 2}
-                            textAnchor={node.level < 2 ? "end" : "start"}
-                            alignmentBaseline="auto"
-                            className="text-xs font-black uppercase tracking-widest fill-slate-500 dark:fill-slate-400 transition-colors group-hover:fill-slate-900 dark:group-hover:fill-white"
-                        >
-                            {node.label}
-                        </text>
-                        <text
-                            x={node.level < 2 ? node.x - 12 : node.x + nodeWidth + 12}
-                            y={node.y + node.height / 2 + 10}
-                            textAnchor={node.level < 2 ? "end" : "start"}
-                            className="text-[11px] font-bold fill-slate-300 dark:fill-slate-600"
-                        >
-                            ${node.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </text>
+                        <circle
+                            cx={zoomState.x}
+                            cy={zoomState.y}
+                            r={150}
+                            fill="none"
+                            stroke="rgba(255,255,255,0.2)"
+                            strokeWidth="1"
+                        />
                     </g>
-                ))}
+                )}
             </svg>
         </div>
     );
