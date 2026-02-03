@@ -970,7 +970,7 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
 
     // Calculate dynamic height
     const maxNodesInLevel = Math.max(...[0, 1, 2, 3].map(lvl => nodes.filter(n => n.level === lvl).length));
-    const minNodeSpacing = 40;
+    const minNodeSpacing = 60;
     const paddingY = 60;
     const requiredHeight = (maxNodesInLevel * minNodeSpacing) + (paddingY * 2);
     const height = Math.max(500, requiredHeight);
@@ -1010,7 +1010,7 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
             });
 
             // Vertically center the group
-            const groupHeight = levelNodes.reduce((sum, n) => sum + result[n.id].height, 0) + (levelNodes.length - 1) * 12;
+            const groupHeight = levelNodes.reduce((sum, n) => sum + result[n.id].height, 0) + (levelNodes.length - 1) * 30;
             let startY = (height - groupHeight) / 2;
 
             levelNodes.forEach(node => {
@@ -1018,7 +1018,7 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
                 n.y = startY;
                 n.sourceY = startY;
                 n.targetY = startY;
-                startY += n.height + 12;
+                startY += n.height + 30;
             });
         });
 
