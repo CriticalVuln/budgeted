@@ -28,7 +28,14 @@ import {
     Settings,
     Copy,
     TrendingUp,
-    Home
+    Home,
+    RefreshCw,
+    CircleHelp,
+    Bell,
+    Clock,
+    TrendingDown,
+    Palette,
+    CheckCheck
 } from 'lucide-react';
 
 import Investments from './Investments';
@@ -245,6 +252,36 @@ const Modal = ({ isOpen, onClose, title, children }) => {
                 </div>
                 <div className="p-6 overflow-y-auto">{children}</div>
             </div>
+        </div>
+    );
+};
+
+// Toast Notification System
+const ToastContainer = ({ toasts, removeToast }) => {
+    if (toasts.length === 0) return null;
+    return (
+        <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
+            {toasts.map(toast => (
+                <div
+                    key={toast.id}
+                    className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-xl animate-in slide-in-from-right-4 duration-300 min-w-[280px] max-w-[360px] ${toast.type === 'success' ? 'bg-emerald-900/90 border-emerald-700/50 text-emerald-100' :
+                        toast.type === 'error' ? 'bg-rose-900/90 border-rose-700/50 text-rose-100' :
+                            toast.type === 'warning' ? 'bg-amber-900/90 border-amber-700/50 text-amber-100' :
+                                'bg-slate-900/90 border-slate-700/50 text-slate-100'
+                        }`}
+                >
+                    <div className="shrink-0">
+                        {toast.type === 'success' && <CheckCheck size={16} />}
+                        {toast.type === 'error' && <AlertCircle size={16} />}
+                        {toast.type === 'warning' && <AlertCircle size={16} />}
+                        {toast.type === 'info' && <Bell size={16} />}
+                    </div>
+                    <p className="text-sm font-medium flex-1">{toast.message}</p>
+                    <button onClick={() => removeToast(toast.id)} className="shrink-0 opacity-60 hover:opacity-100 transition-opacity">
+                        <X size={14} />
+                    </button>
+                </div>
+            ))}
         </div>
     );
 };
@@ -993,10 +1030,14 @@ const FinancialFlowSankey = ({ income, bills, transactions, contributions, goals
                 return b.value - a.value;
             });
 
+            const maxNodes = Math.max(...levels.map(lvl => nodes.filter(n => n.level === lvl).length));
+            const maxSpacing = Math.max(0, (maxNodes - 1) * 30);
+            const availableContentHeight = Math.max(10, height - (paddingY * 2) - maxSpacing);
+
             levelNodes.forEach(node => {
                 // Height proportional to value relative to totalVolume
                 const ratio = node.value / totalVolume;
-                let nodeHeight = ratio * (height - paddingY * 2);
+                let nodeHeight = ratio * availableContentHeight;
                 nodeHeight = Math.max(nodeHeight, 4);
 
                 result[node.id] = {
@@ -1608,8 +1649,29 @@ const MonthlyIncomeChart = ({ income, selectedYear }) => {
     );
 };
 
+// Distinct color palette for savings goal segments — ensures visual separation even when goals share the same stored color
+const SAVINGS_GOAL_COLORS = [
+    '#2A9D8F', // teal
+    '#e76f51', // burnt sienna
+    '#e9c46a', // sand yellow
+    '#457b9d', // muted blue
+    '#a8dadc', // seafoam
+    '#f4a261', // muted orange
+    '#8ecae6', // sky blue
+    '#c77dff', // lavender
+];
+
 const MonthlySavingsChart = ({ contributions = [], goals = [], selectedYear }) => {
     const [hoveredData, setHoveredData] = useState(null);
+
+    // Build a stable goal-index → color mapping so colors don't shift when months change
+    const goalColorMap = useMemo(() => {
+        const map = {};
+        goals.forEach((g, idx) => {
+            map[g.id] = SAVINGS_GOAL_COLORS[idx % SAVINGS_GOAL_COLORS.length];
+        });
+        return map;
+    }, [goals]);
 
     const monthlyData = useMemo(() => {
         const months = [];
@@ -1662,6 +1724,13 @@ const MonthlySavingsChart = ({ contributions = [], goals = [], selectedYear }) =
     const getSlotX = (i) => padding + (i * itemWidth) + (itemWidth / 2);
     const avgLineY = (height / 2) - (avgSavings * scale);
 
+    // Only show legend for goals that have contributions this year
+    const activeGoalIds = useMemo(() => {
+        const ids = new Set();
+        monthlyData.forEach(m => Object.keys(m.goals).forEach(id => ids.add(id)));
+        return [...ids];
+    }, [monthlyData]);
+
     const goalMap = useMemo(() => {
         const map = {};
         goals.forEach(g => { map[g.id] = g; });
@@ -1692,9 +1761,9 @@ const MonthlySavingsChart = ({ contributions = [], goals = [], selectedYear }) =
                             {goalEntries.map(([goalId, amount]) => {
                                 const segmentHeight = Math.max(amount * scale, 2);
                                 const segmentY = currentY - segmentHeight;
-                                const goal = goalMap[goalId] || { name: 'Unknown Goal', color: 'bg-[#2A9D8F]' };
-                                const hexMatch = goal.color.match(/bg-\[(#[0-9a-fA-F]{6})\]/);
-                                const fillColor = hexMatch ? hexMatch[1] : '#2A9D8F';
+                                const goal = goalMap[goalId] || { name: 'Unknown Goal' };
+                                // Use the stable palette color — not the goal's stored Tailwind class
+                                const fillColor = goalColorMap[goalId] || SAVINGS_GOAL_COLORS[0];
 
                                 currentY -= segmentHeight;
 
@@ -1712,7 +1781,8 @@ const MonthlySavingsChart = ({ contributions = [], goals = [], selectedYear }) =
                                             x: centerX,
                                             y: segmentY,
                                             value: amount,
-                                            label: `${month.label} - ${goal.name}`
+                                            label: `${month.label} · ${goal.name}`,
+                                            color: fillColor,
                                         })}
                                         onMouseLeave={() => setHoveredData(null)}
                                     />
@@ -1725,12 +1795,30 @@ const MonthlySavingsChart = ({ contributions = [], goals = [], selectedYear }) =
 
                 {hoveredData && (
                     <g transform={`translate(${hoveredData.x}, ${hoveredData.y})`} className="pointer-events-none transition-all duration-200 ease-out z-50">
-                        <rect x="-65" y="-55" width="130" height="45" rx="8" className="fill-slate-800 dark:fill-slate-100 shadow-xl opacity-95" />
-                        <text x="0" y="-37" textAnchor="middle" className="fill-slate-300 dark:fill-slate-500 text-[9px] font-bold uppercase tracking-wider">{hoveredData.label}</text>
-                        <text x="0" y="-20" textAnchor="middle" className="fill-white dark:fill-slate-900 text-sm font-bold">${hoveredData.value.toLocaleString()}</text>
+                        <rect x="-70" y="-58" width="140" height="48" rx="8" className="fill-slate-800 dark:fill-slate-100 shadow-xl opacity-95" />
+                        <circle cx="-52" cy="-35" r="5" fill={hoveredData.color} />
+                        <text x="-42" y="-31" className="fill-slate-300 dark:fill-slate-500 text-[9px] font-bold uppercase tracking-wider">{hoveredData.label}</text>
+                        <text x="0" y="-14" textAnchor="middle" className="fill-white dark:fill-slate-900 text-sm font-bold">${hoveredData.value.toLocaleString()}</text>
                     </g>
                 )}
             </svg>
+
+            {/* Color-coded legend */}
+            {activeGoalIds.length > 0 && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 justify-center">
+                    {activeGoalIds.map(id => {
+                        const goal = goalMap[id];
+                        if (!goal) return null;
+                        const color = goalColorMap[id] || SAVINGS_GOAL_COLORS[0];
+                        return (
+                            <div key={id} className="flex items-center gap-1.5">
+                                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                                <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{goal.name}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };
@@ -1955,6 +2043,13 @@ const App = () => {
     const [analysisResult, setAnalysisResult] = usePersistentState('ai_analysis_result', '');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+    // Follow-up State
+    const [isFollowUpOpen, setIsFollowUpOpen] = useState(false);
+    const [followUpQuestion, setFollowUpQuestion] = useState('');
+
+    // Chat thread — persisted so conversation survives page refresh
+    const [chatMessages, setChatMessages] = usePersistentState('ai_chat_messages', []);
+
     // Action Items State
     const [actionItems, setActionItems] = usePersistentState('ai_action_items', []);
     const [isActionBannerExpanded, setIsActionBannerExpanded] = useState(false);
@@ -1962,6 +2057,15 @@ const App = () => {
 
     // Profile Deletion State
     const [profileToDelete, setProfileToDelete] = useState(null); // ID of profile pending deletion
+
+    // Toast Notification State
+    const [toasts, setToasts] = useState([]);
+    const showToast = (message, type = 'success') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+    };
+    const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
     // Form State
     const [isNewBillPaid, setIsNewBillPaid] = useState(false);
@@ -1971,7 +2075,7 @@ const App = () => {
     const [selectedIncome, setSelectedIncome] = useState(null);
 
     // --- Dividend Bot State ---
-    const [finnhubApiKey] = usePersistentState('finnhub_api_key', '');
+    const [finnhubApiKey, setFinnhubApiKey] = usePersistentState('finnhub_api_key', '');
     const [dismissedDividendIds, setDismissedDividendIds] = usePersistentState('dismissed_dividends', []);
     const [dividendAlerts, setDividendAlerts] = useState([]);
 
@@ -2007,6 +2111,12 @@ const App = () => {
                 try {
                     // Finnhub Dividend Endpoint
                     const res = await fetch(`https://finnhub.io/api/v1/stock/dividend?symbol=${symbol}&from=${fromStr}&to=${toStr}&token=${finnhubApiKey}`);
+
+                    if (res.status === 403) {
+                        console.warn('Finnhub Dividend Endpoint returned 403 Forbidden. Stopping check to prevent spam. (Likely Premium-only endpoint or invalid key)');
+                        break; // Stop the loop for all other symbols
+                    }
+
                     if (res.ok) {
                         const data = await res.json();
                         // Expecting array of objects: { date: "2024-xx-xx", amount: 0.xx, payDate: "2024-xx-xx", ... }
@@ -2665,6 +2775,66 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
         setAiApiKeys({ ...aiApiKeys, [provider]: key });
     };
 
+    const handleAskFollowUp = async () => {
+        if (!followUpQuestion.trim()) return;
+
+        const apiKey = aiApiKeys[aiProvider];
+        if (!apiKey) { setIsAISettingsOpen(true); return; }
+
+        setIsAnalyzing(true);
+
+        try {
+            // Get fresh context from current data
+            const data = extractCurrentPageData();
+            const analysisPrompt = generateAnalysisPrompt(data);
+
+            // Construct a focused follow-up prompt
+            const contextPrompt = `
+${analysisPrompt}
+
+---
+
+**PREVIOUS ANALYSIS:**
+"""
+${analysisResult}
+"""
+
+**USER QUESTION:**
+"${followUpQuestion}"
+
+**INSTRUCTION:**
+Answer the user's question above based on the provided financial data and previous analysis.
+- Be direct and concise.
+- DO NOT regenerate the full analysis.
+- Focus ONLY on answering the specific question.
+`;
+
+            let result = '';
+            if (aiProvider === 'gemini') result = await callGeminiAPI(contextPrompt, apiKey);
+            else if (aiProvider === 'claude') result = await callClaudeAPI(contextPrompt, apiKey);
+            else if (aiProvider === 'openai') result = await callOpenAIAPI(contextPrompt, apiKey);
+
+            // Add user bubble then AI bubble to the thread
+            const userMsg = followUpQuestion;
+            setChatMessages(prev => [
+                ...prev,
+                { role: 'user', content: userMsg, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+                { role: 'ai', content: result, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+            ]);
+            // Also append to analysisResult so action-item extraction context stays intact
+            const newContent = `\n\n---\n\n### ❓ ${userMsg}\n\n${result}`;
+            setAnalysisResult(prev => prev + newContent);
+            setFollowUpQuestion('');
+            setIsFollowUpOpen(false);
+
+        } catch (e) {
+            console.error("Follow-up failed", e);
+            alert(`Failed to get answer: ${e.message}`);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     const handleAnalyzeFinances = async () => {
         const apiKey = aiApiKeys[aiProvider];
 
@@ -2694,6 +2864,7 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
         setIsAnalyzing(true);
         setIsAIAnalysisOpen(true);
         setAnalysisResult('');
+        setChatMessages([]);
 
         try {
             const data = extractCurrentPageData();
@@ -2709,6 +2880,7 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
             }
 
             setAnalysisResult(analysis);
+            setChatMessages([{ role: 'ai', content: analysis, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
 
             // After successful analysis, extract action items
             await extractActionItems(analysis);
@@ -2777,9 +2949,6 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
     const Dashboard = () => {
         const currentYear = new Date().getFullYear();
         const [spendingIncomeYear, setSpendingIncomeYear] = useState(currentYear);
-        const [cashFlowYear, setCashFlowYear] = useState(currentYear);
-        const [cashBackYear, setCashBackYear] = useState(currentYear);
-        const [incomeYear, setIncomeYear] = useState(currentYear);
         const [sankeyYear, setSankeyYear] = useState(currentYear);
 
         // Click outside to close banner
@@ -2797,186 +2966,334 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
         const incompleteTasks = actionItems.filter(item => !item.completed).length;
         const totalTasks = actionItems.length;
 
+        // Greeting logic
+        const hour = new Date().getHours();
+        const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+        // KPI calculations
+        const thisMonth = new Date().getMonth();
+        const thisYear = new Date().getFullYear();
+        const monthlyIncome = activeIncome
+            .filter(i => { const d = new Date(i.date + 'T00:00:00'); return d.getMonth() === thisMonth && d.getFullYear() === thisYear; })
+            .reduce((s, i) => s + i.amount, 0);
+        const monthlyExpenses = activeBills
+            .filter(b => { const d = new Date(b.due + 'T00:00:00'); return d.getMonth() === thisMonth && d.getFullYear() === thisYear; })
+            .reduce((s, b) => s + b.amount, 0)
+            + activeTransactions
+                .filter(t => { const d = new Date(t.date + 'T00:00:00'); return d.getMonth() === thisMonth && d.getFullYear() === thisYear; })
+                .reduce((s, t) => s + t.amount, 0);
+        const savingsRate = monthlyIncome > 0 ? Math.round(((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100) : 0;
+        // Exclude retirement goal from totalSavings — that money is already in totalPortfolioValue
+        const totalSavings = activeGoals
+            .filter(g => !g.name?.toLowerCase().includes('retirement'))
+            .reduce((s, g) => s + g.current, 0);
+        const netWorth = totalPortfolioValue + totalSavings;
+
         return (
             <div className="space-y-6 animate-in fade-in duration-500 pb-10">
-                {/* AI Action Items Banner */}
-                {actionItems.length > 0 && (
-                    <div className="action-banner-container relative">
-                        {/* Collapsed Banner */}
+                {/* Personalized Greeting */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
+                    <div>
+                        <h2 className="text-2xl font-black text-[var(--text-heading)] tracking-tight">
+                            {greeting}, {currentProfileName.split(' ')[0]} 👋
+                        </h2>
+                        <p className="text-sm text-[var(--text-muted)] mt-0.5">
+                            Here's your financial snapshot for {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                        </p>
+                    </div>
+                    {metrics.dueSoonBills.length > 0 && (
                         <button
-                            onClick={() => setIsActionBannerExpanded(!isActionBannerExpanded)}
-                            className="w-full bg-gradient-to-r from-[var(--primary)] to-[#3EBAAF] text-white rounded-xl p-4 flex items-center justify-between hover:shadow-lg transition-all duration-300 group"
+                            onClick={() => setIsDueSoonModalOpen(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 text-amber-500 rounded-xl text-sm font-bold hover:bg-amber-500/20 transition-all duration-200 whitespace-nowrap"
                         >
+                            <Bell size={14} className="animate-pulse" />
+                            {metrics.dueSoonBills.length} bill{metrics.dueSoonBills.length > 1 ? 's' : ''} due soon
+                        </button>
+                    )}
+                </div>
+
+                {/* KPI Row */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[
+                        {
+                            label: 'Net Worth',
+                            value: `$${netWorth.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                            icon: Wallet,
+                            color: 'text-[var(--primary)]',
+                            bg: 'bg-[var(--primary)]/10',
+                            sub: 'Portfolio + Savings'
+                        },
+                        {
+                            label: 'Monthly Income',
+                            value: `$${monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                            icon: TrendingUp,
+                            color: 'text-emerald-500',
+                            bg: 'bg-emerald-500/10',
+                            sub: new Date().toLocaleDateString('en-US', { month: 'long' })
+                        },
+                        {
+                            label: 'Monthly Expenses',
+                            value: `$${monthlyExpenses.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                            icon: TrendingDown,
+                            color: 'text-rose-400',
+                            bg: 'bg-rose-500/10',
+                            sub: 'Bills + Transactions'
+                        },
+                        {
+                            label: 'Savings Rate',
+                            value: `${Math.max(0, savingsRate)}%`,
+                            icon: PiggyBank,
+                            color: savingsRate >= 20 ? 'text-emerald-500' : savingsRate >= 10 ? 'text-amber-500' : 'text-rose-400',
+                            bg: savingsRate >= 20 ? 'bg-emerald-500/10' : savingsRate >= 10 ? 'bg-amber-500/10' : 'bg-rose-500/10',
+                            sub: savingsRate >= 20 ? 'Excellent' : savingsRate >= 10 ? 'On Track' : 'Needs Attention'
+                        },
+                    ].map(kpi => (
+                        <div key={kpi.label} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-4 hover:shadow-lg hover:border-[var(--primary)]/30 transition-all duration-300 group">
+                            <div className="flex items-center justify-between mb-3">
+                                <span className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">{kpi.label}</span>
+                                <div className={`w-7 h-7 rounded-lg ${kpi.bg} flex items-center justify-center`}>
+                                    <kpi.icon size={14} className={kpi.color} />
+                                </div>
+                            </div>
+                            <div className={`text-2xl font-black tracking-tight ${kpi.color}`}>{kpi.value}</div>
+                            <div className="text-[10px] text-[var(--text-muted)] mt-1 font-medium">{kpi.sub}</div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* AI Action Items */}
+                {actionItems.length > 0 ? (
+                    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden transition-colors duration-500" style={{ boxShadow: '0 4px 24px -4px var(--shadow-color)' }}>
+                        {/* Card Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
                             <div className="flex items-center gap-3">
-                                <Sparkles size={20} className="animate-pulse" />
-                                <div className="text-left">
-                                    <h3 className="font-bold text-sm">AI Action Items</h3>
-                                    <p className="text-xs opacity-90">
-                                        {incompleteTasks} of {totalTasks} tasks remaining
+                                {/* Circular progress ring */}
+                                <div className="relative w-9 h-9 shrink-0">
+                                    <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                                        <circle cx="18" cy="18" r="15" fill="none" stroke="var(--border)" strokeWidth="3" />
+                                        <circle
+                                            cx="18" cy="18" r="15" fill="none"
+                                            stroke="var(--primary)" strokeWidth="3"
+                                            strokeDasharray={`${Math.round(((totalTasks - incompleteTasks) / Math.max(totalTasks, 1)) * 94)} 94`}
+                                            strokeLinecap="round"
+                                            className="transition-all duration-700"
+                                        />
+                                    </svg>
+                                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-[var(--text-heading)]">
+                                        {totalTasks - incompleteTasks}/{totalTasks}
+                                    </span>
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black text-[var(--text-heading)] uppercase tracking-tight flex items-center gap-2">
+                                        AI Action Items
+                                        {isExtractingActions && (
+                                            <div className="w-3 h-3 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+                                        )}
+                                    </h3>
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-0.5 font-medium">
+                                        {incompleteTasks === 0 ? '🎉 All tasks complete!' : `${incompleteTasks} task${incompleteTasks > 1 ? 's' : ''} remaining`}
                                     </p>
                                 </div>
                             </div>
-                            <ChevronDown
-                                size={20}
-                                className={`transform transition-transform duration-300 ${isActionBannerExpanded ? 'rotate-180' : ''}`}
-                            />
-                        </button>
+                            <button
+                                onClick={() => setActionItems([])}
+                                className="text-[10px] font-bold text-[var(--text-muted)] hover:text-rose-500 transition-colors uppercase tracking-widest px-2 py-1 rounded-lg hover:bg-rose-500/10"
+                            >
+                                Clear all
+                            </button>
+                        </div>
 
-                        {/* Expanded Menu */}
-                        {isActionBannerExpanded && (
-                            <div className="absolute top-full left-0 right-0 mt-2 bg-[var(--bg-card)] rounded-xl border border-[var(--border)] shadow-2xl z-50 max-h-[400px] overflow-y-auto animate-in slide-in-from-top-2 duration-200">
-                                <div className="p-4">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h4 className="font-bold text-[var(--text-heading)]">Your Action Items</h4>
-                                        {isExtractingActions && (
-                                            <span className="text-xs text-[var(--text-muted)] flex items-center gap-2">
-                                                <div className="w-3 h-3 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
-                                                Updating...
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {actionItems.length === 0 ? (
-                                        <p className="text-sm text-[var(--text-muted)] text-center py-4">
-                                            Run an AI analysis to generate action items
-                                        </p>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            {actionItems.map(item => (
-                                                <div
-                                                    key={item.id}
-                                                    className={`flex items-start gap-3 p-3 rounded-lg border border-[var(--border)] hover:bg-[var(--bg-main)] transition-colors duration-200 group ${item.completed ? 'opacity-60' : ''}`}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={item.completed}
-                                                        onChange={() => toggleActionItem(item.id)}
-                                                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[var(--primary)] focus:ring-[var(--primary)] cursor-pointer"
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className={`text-sm ${item.completed ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-body)]'}`}>
-                                                            {item.text}
-                                                        </p>
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${item.priority === 'high' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
-                                                                item.priority === 'medium' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                                                                    'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                                                                }`}>
-                                                                {item.priority}
-                                                            </span>
-                                                            {item.createdAt && (
-                                                                <span className="text-[9px] text-[var(--text-muted)]">
-                                                                    Added {item.createdAt}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => deleteActionItem(item.id)}
-                                                        className="opacity-0 group-hover:opacity-100 text-[var(--text-muted)] hover:text-rose-500 transition-all p-1"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    <button
-                                        onClick={() => setActionItems([])}
-                                        className="w-full mt-4 py-2 text-xs text-[var(--text-muted)] hover:text-rose-500 transition-colors"
+                        {/* Task List */}
+                        <div className="divide-y divide-[var(--border)]">
+                            {actionItems.map((item) => {
+                                const priorityStyles = {
+                                    high: { bar: 'bg-rose-500', badge: 'bg-rose-500/10 text-rose-400 border-rose-500/20', dot: 'bg-rose-500' },
+                                    medium: { bar: 'bg-amber-400', badge: 'bg-amber-400/10 text-amber-400 border-amber-400/20', dot: 'bg-amber-400' },
+                                    low: { bar: 'bg-slate-500', badge: 'bg-slate-500/10 text-slate-400 border-slate-500/20', dot: 'bg-slate-500' },
+                                };
+                                const style = priorityStyles[item.priority] || priorityStyles.low;
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={`flex items-start gap-3 px-5 py-3.5 group hover:bg-[var(--bg-main)] transition-colors duration-150 ${item.completed ? 'opacity-50' : ''}`}
                                     >
-                                        Clear All Items
-                                    </button>
+                                        {/* Priority bar */}
+                                        <div className={`w-0.5 self-stretch rounded-full shrink-0 ${style.bar} ${item.completed ? 'opacity-30' : ''}`} />
+
+                                        {/* Checkbox */}
+                                        <button
+                                            onClick={() => toggleActionItem(item.id)}
+                                            className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all duration-200 ${item.completed ? 'bg-emerald-500 border-emerald-500' : 'border-[var(--border)] hover:border-[var(--primary)]'}`}
+                                        >
+                                            {item.completed && (
+                                                <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                                                    <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                </svg>
+                                            )}
+                                        </button>
+
+                                        {/* Content */}
+                                        <div className="flex-1 min-w-0">
+                                            <p className={`text-sm leading-snug ${item.completed ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-body)]'}`}>
+                                                {item.text}
+                                            </p>
+                                            <div className="flex items-center gap-2 mt-1.5">
+                                                <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${style.badge}`}>
+                                                    {item.priority}
+                                                </span>
+                                                {item.createdAt && (
+                                                    <span className="text-[9px] text-[var(--text-muted)]">{item.createdAt}</span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Delete */}
+                                        <button
+                                            onClick={() => deleteActionItem(item.id)}
+                                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all shrink-0 mt-0.5"
+                                        >
+                                            <Trash2 size={13} />
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Footer CTA */}
+                        <div className="px-5 py-3 border-t border-[var(--border)] flex items-center justify-between">
+                            <span className="text-[10px] text-[var(--text-muted)]">Generated by AI · Click to check off tasks</span>
+                            <button
+                                onClick={handleAnalyzeFinances}
+                                className="flex items-center gap-1.5 text-[10px] font-bold text-[var(--primary)] hover:underline uppercase tracking-widest"
+                            >
+                                <RefreshCw size={10} />
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    /* Empty state — only show if analysis has been run before */
+                    analysisResult && (
+                        <div className="bg-[var(--bg-card)] border border-dashed border-[var(--border)] rounded-2xl px-6 py-5 flex items-center justify-between transition-colors duration-500">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                                    <CheckCheck size={15} className="text-purple-400" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-bold text-[var(--text-heading)]">No action items yet</p>
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Run an AI analysis to generate personalized tasks</p>
                                 </div>
                             </div>
-                        )}
-                    </div>
+                            <button
+                                onClick={handleAnalyzeFinances}
+                                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl transition-all"
+                            >
+                                <Sparkles size={12} />
+                                Analyze
+                            </button>
+                        </div>
+                    )
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="col-span-full">
-                        <Card
-                            leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Financial Flow Pipeline</span>}
-                            action={<YearDropdown value={sankeyYear} onChange={setSankeyYear} years={availableYears} label="Financial Flow" />}
-                        >
-                            <FinancialFlowSankey
-                                income={activeIncome}
-                                bills={activeBills}
-                                transactions={activeTransactions}
-                                contributions={activeContributions}
-                                goals={activeGoals}
-                                selectedYear={sankeyYear}
-                                portfolioValue={totalPortfolioValue}
-                            />
-                        </Card>
-                    </div>
+                {/* Hero: Sankey + bottom 2-col row */}
+                <div className="space-y-4">
+                    {/* Sankey — full width hero */}
+                    <Card
+                        leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Financial Flow Pipeline</span>}
+                        action={<YearDropdown value={sankeyYear} onChange={setSankeyYear} years={availableYears} label="Financial Flow" />}
+                    >
+                        <FinancialFlowSankey
+                            income={activeIncome}
+                            bills={activeBills}
+                            transactions={activeTransactions}
+                            contributions={activeContributions}
+                            goals={activeGoals}
+                            selectedYear={sankeyYear}
+                            portfolioValue={totalPortfolioValue}
+                        />
+                    </Card>
 
-                    <div className="col-span-1 md:col-span-2">
-                        <Card
-                            leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Spending vs Income History</span>}
-                            action={
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#2A9D8F]"></div><span className="text-[10px] font-bold text-slate-400 uppercase">Income</span></div>
-                                    <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#A8DADC]"></div><span className="text-[10px] font-bold text-slate-400 uppercase">Saved</span></div>
-                                    <YearDropdown value={spendingIncomeYear} onChange={setSpendingIncomeYear} years={availableYears} label="Spending Income" />
-                                </div>
-                            }
-                        >
-                            <IncomeSavingsLineChart income={activeIncome} bills={activeBills} transactions={activeTransactions} selectedYear={spendingIncomeYear} />
-                        </Card>
-                    </div>
+                    {/* Bottom row: This Month summary + Spending vs Income chart */}
+                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                        {/* This Month — text summary card */}
+                        <div className="lg:col-span-2">
+                            <Card leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">This Month</span>}>
+                                <div className="space-y-4 py-1">
+                                    {[
+                                        {
+                                            label: 'Income',
+                                            value: `$${monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                                            color: 'text-emerald-500',
+                                            bg: 'bg-emerald-500/10',
+                                            bar: 100,
+                                            barColor: 'bg-emerald-500',
+                                        },
+                                        {
+                                            label: 'Expenses',
+                                            value: `$${monthlyExpenses.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                                            color: 'text-rose-400',
+                                            bg: 'bg-rose-400/10',
+                                            bar: monthlyIncome > 0 ? Math.min((monthlyExpenses / monthlyIncome) * 100, 100) : 0,
+                                            barColor: 'bg-rose-400',
+                                        },
+                                        {
+                                            label: 'Net Cash Flow',
+                                            value: `${monthlyIncome - monthlyExpenses >= 0 ? '+' : ''}${(monthlyIncome - monthlyExpenses).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                                            color: monthlyIncome - monthlyExpenses >= 0 ? 'text-[var(--primary)]' : 'text-rose-400',
+                                            bg: monthlyIncome - monthlyExpenses >= 0 ? 'bg-[var(--primary)]/10' : 'bg-rose-400/10',
+                                            bar: null,
+                                        },
+                                    ].map(row => (
+                                        <div key={row.label}>
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-widest">{row.label}</span>
+                                                <span className={`text-base font-black tracking-tight ${row.color}`}>{row.value}</span>
+                                            </div>
+                                            {row.bar !== null && (
+                                                <div className="h-1 rounded-full bg-[var(--border)] overflow-hidden">
+                                                    <div className={`h-full rounded-full transition-all duration-700 ${row.barColor}`} style={{ width: `${row.bar}%` }} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
 
-                    <div className="col-span-1 md:col-span-2">
-                        <Card
-                            leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Cash Flow Velocity</span>}
-                            action={
-                                <div className="flex items-center gap-3">
-                                    <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500"></div><span className="text-[10px] font-bold text-slate-400 uppercase">In</span></div>
-                                    <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-rose-500"></div><span className="text-[10px] font-bold text-slate-400 uppercase">Out</span></div>
-                                    <YearDropdown value={cashFlowYear} onChange={setCashFlowYear} years={availableYears} label="Cash Flow" />
-                                </div>
-                            }
-                        >
-                            <MoneyFlowChart income={activeIncome} bills={activeBills} transactions={activeTransactions} selectedYear={cashFlowYear} />
-                        </Card>
-                    </div>
-
-                    {/* Bottom Section: Tracker + Stacked Right Column */}
-                    <div className="col-span-full grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {/* Left Column: Spending Tracker */}
-                        <div>
-                            <Card leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Monthly Spending Tracker</span>}>
-                                <div className="text-3xl font-black tracking-tighter mb-1">${metrics.totalSpent.toLocaleString()}</div>
-                                <div className="mt-2">
-                                    <ProgressBar progress={metrics.spendingProgress} color="bg-rose-500" />
-                                    <div className="flex justify-between items-center mt-2">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Limit: ${(budgetSpecs.total || 0).toLocaleString()}</p>
-                                        <button onClick={() => setIsBudgetModalOpen(true)} className="text-[10px] text-[#2A9D8F] hover:text-[#2A9D8F] font-black uppercase tracking-widest flex items-center gap-1 transition-colors"><Edit2 size={10} /> Change</button>
+                                    <div className="pt-3 border-t border-[var(--border)] grid grid-cols-2 gap-3">
+                                        <div className="bg-[var(--bg-main)] rounded-xl p-3">
+                                            <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest mb-1">Savings Rate</div>
+                                            <div className={`text-xl font-black ${savingsRate >= 20 ? 'text-emerald-500' : savingsRate >= 10 ? 'text-amber-400' : 'text-rose-400'}`}>
+                                                {savingsRate}%
+                                            </div>
+                                        </div>
+                                        <div className="bg-[var(--bg-main)] rounded-xl p-3">
+                                            <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest mb-1">Budget Used</div>
+                                            <div className={`text-xl font-black ${metrics.spendingProgress > 90 ? 'text-rose-400' : metrics.spendingProgress > 70 ? 'text-amber-400' : 'text-emerald-500'}`}>
+                                                {Math.round(metrics.spendingProgress)}%
+                                            </div>
+                                            <button onClick={() => setIsBudgetModalOpen(true)} className="text-[9px] text-[var(--primary)] font-bold uppercase tracking-widest flex items-center gap-0.5 mt-0.5 hover:underline">
+                                                <Edit2 size={8} /> Edit limit
+                                            </button>
+                                        </div>
                                     </div>
-                                    <SpendingCategoryBars categories={metrics.currentMonthCategories} limits={budgetSpecs.categories} />
                                 </div>
                             </Card>
                         </div>
 
-                        {/* Right Column: Stacked Cards (Cash Back & Income) */}
-                        <div className="flex flex-col gap-4">
+                        {/* Spending vs Income line chart */}
+                        <div className="lg:col-span-3">
                             <Card
-                                leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Monthly Cash Back Rewards</span>}
-                                action={<YearDropdown value={cashBackYear} onChange={setCashBackYear} years={availableYears} label="Cash Back" />}
+                                leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Spending vs Income</span>}
+                                action={
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#2A9D8F]" /><span className="text-[10px] font-bold text-slate-400 uppercase">Income</span></div>
+                                        <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#A8DADC]" /><span className="text-[10px] font-bold text-slate-400 uppercase">Saved</span></div>
+                                        <YearDropdown value={spendingIncomeYear} onChange={setSpendingIncomeYear} years={availableYears} label="Spending Income" />
+                                    </div>
+                                }
                             >
-                                <MonthlyCashBackChart transactions={activeTransactions} selectedYear={cashBackYear} />
-                            </Card>
-
-                            <Card
-                                leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Monthly Income</span>}
-                                action={<YearDropdown value={incomeYear} onChange={setIncomeYear} years={availableYears} label="Monthly Income" />}
-                            >
-                                <MonthlyIncomeChart income={activeIncome} selectedYear={incomeYear} />
+                                <IncomeSavingsLineChart income={activeIncome} bills={activeBills} transactions={activeTransactions} selectedYear={spendingIncomeYear} />
                             </Card>
                         </div>
                     </div>
-
                 </div>
             </div>
         );
@@ -3021,6 +3338,25 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
 
         return (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                {/* Bills Due This Week Banner */}
+                {metrics.dueSoonBills.length > 0 && (
+                    <button
+                        onClick={() => setIsDueSoonModalOpen(true)}
+                        className="w-full flex items-center gap-4 px-5 py-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-left hover:bg-amber-500/15 transition-all duration-200 group"
+                    >
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                            <Bell size={16} className="text-amber-500 animate-pulse" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-sm font-bold text-amber-500">{metrics.dueSoonBills.length} bill{metrics.dueSoonBills.length > 1 ? 's' : ''} due within 7 days</div>
+                            <div className="text-xs text-amber-500/70 truncate">
+                                {metrics.dueSoonBills.map(b => `${b.name} ($${b.amount.toFixed(0)})`).join(' · ')}
+                            </div>
+                        </div>
+                        <ArrowUpRight size={16} className="text-amber-500 shrink-0 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                    </button>
+                )}
+
                 <Card
                     leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Category Spending {chartView === 'distribution' ? 'Breakdown' : 'Trends'}</span>}
                     action={
@@ -3246,8 +3582,54 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
             return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
         }, [activeIncome, showArchivedIncome, selectedIncomeSource, incomeYearFilter]);
 
+        const ytdIncome = activeIncome
+            .filter(i => i.date && new Date(i.date + 'T00:00:00').getFullYear() === incomeYearFilter)
+            .reduce((s, i) => s + i.amount, 0);
+        const ytdCount = activeIncome.filter(i => i.date && new Date(i.date + 'T00:00:00').getFullYear() === incomeYearFilter).length;
+
         return (
             <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                {/* YTD Income Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                    {[
+                        {
+                            label: `${incomeYearFilter} Total Income`,
+                            value: `$${ytdIncome.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                            sub: `${ytdCount} entries logged`,
+                            color: 'text-emerald-500',
+                            bg: 'bg-emerald-500/10',
+                            icon: TrendingUp
+                        },
+                        {
+                            label: 'Avg Per Entry',
+                            value: ytdCount > 0 ? `$${Math.round(ytdIncome / ytdCount).toLocaleString()}` : '—',
+                            sub: 'Per income event',
+                            color: 'text-[var(--primary)]',
+                            bg: 'bg-[var(--primary)]/10',
+                            icon: DollarSign
+                        },
+                        {
+                            label: 'Monthly Average',
+                            value: `$${Math.round(ytdIncome / 12).toLocaleString()}`,
+                            sub: 'Annualized monthly',
+                            color: 'text-blue-400',
+                            bg: 'bg-blue-500/10',
+                            icon: Calendar
+                        },
+                    ].map(stat => (
+                        <div key={stat.label} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-4 hover:shadow-lg hover:border-[var(--primary)]/30 transition-all duration-300">
+                            <div className="flex items-center justify-between mb-3">
+                                <span className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">{stat.label}</span>
+                                <div className={`w-7 h-7 rounded-lg ${stat.bg} flex items-center justify-center`}>
+                                    <stat.icon size={14} className={stat.color} />
+                                </div>
+                            </div>
+                            <div className={`text-2xl font-black tracking-tight ${stat.color}`}>{stat.value}</div>
+                            <div className="text-[10px] text-[var(--text-muted)] mt-1 font-medium">{stat.sub}</div>
+                        </div>
+                    ))}
+                </div>
+
                 <div className="space-y-3">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div className="flex items-center gap-2">
@@ -3346,79 +3728,147 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
     };
 
 
-    const SavingsTracker = () => (
-        <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-            <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold tracking-tight transition-colors duration-500">Growth Plan</h2>
-                <button onClick={() => { setEditingGoal(null); setIsGoalModalOpen(true); }} className="bg-[#2A9D8F] text-white px-5 py-2.5 rounded-xl flex items-center gap-2 hover:bg-[#268e81] transition-all shadow-lg shadow-teal-900/20 dark:shadow-none font-medium"><Plus size={18} /> Create Goal</button>
-            </div>
+    const SavingsTracker = () => {
+        // Compute time-to-goal for each goal based on avg monthly contribution
+        const goalEstimates = activeGoals.map(goal => {
+            const remaining = Math.max(0, goal.target - goal.current);
+            const goalContribs = activeContributions.filter(c => c.goalId === goal.id);
+            if (goalContribs.length < 2 || remaining === 0) return { ...goal, monthsLeft: null };
+            const sorted = [...goalContribs].sort((a, b) => new Date(a.date) - new Date(b.date));
+            const firstDate = new Date(sorted[0].date);
+            const lastDate = new Date(sorted[sorted.length - 1].date);
+            const monthsSpan = Math.max(1, (lastDate - firstDate) / (1000 * 60 * 60 * 24 * 30));
+            const totalContributed = goalContribs.reduce((s, c) => s + c.amount, 0);
+            const monthlyRate = totalContributed / monthsSpan;
+            const monthsLeft = monthlyRate > 0 ? Math.ceil(remaining / monthlyRate) : null;
+            return { ...goal, monthsLeft };
+        });
 
-            <Card
-                leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Contribution Patterns</span>}
-                action={<YearDropdown value={savingsYear} onChange={setSavingsYear} years={availableYears} label="Savings Patterns" />}
-            >
-                <MonthlySavingsChart contributions={activeContributions} goals={activeGoals} selectedYear={savingsYear} />
-            </Card>
+        const totalSaved = activeGoals.reduce((s, g) => s + g.current, 0);
+        const totalTarget = activeGoals.reduce((s, g) => s + g.target, 0);
+        const overallPct = totalTarget > 0 ? Math.round((totalSaved / totalTarget) * 100) : 0;
 
-            {/* Moved Savings Progress Card Here */}
-            <Card leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Overall Savings Progress</span>} className="mb-6">
-                <div className="space-y-5">
-                    {activeGoals.length === 0 ? <p className="text-slate-400 text-sm text-center py-4">No goals created yet.</p> : activeGoals.map(goal => (
-                        <div key={goal.id} className="space-y-2">
-                            <div className="flex justify-between text-sm"><span className="font-semibold transition-colors duration-500">{goal.name}</span><span className="text-slate-500 font-medium">{goal.target > 0 ? Math.round((goal.current / goal.target) * 100) : 0}%</span></div>
-                            <ProgressBar progress={goal.target > 0 ? (goal.current / goal.target) * 100 : 0} color={goal.color} />
-                        </div>
+        return (
+            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                {/* Summary KPI Row */}
+                {activeGoals.length > 0 && (
+                    <div className="grid grid-cols-3 gap-4">
+                        {[
+                            { label: 'Total Saved', value: `$${totalSaved.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, sub: `${activeGoals.length} active goal${activeGoals.length > 1 ? 's' : ''}`, color: 'text-[var(--primary)]', bg: 'bg-[var(--primary)]/10', icon: PiggyBank },
+                            { label: 'Total Target', value: `$${totalTarget.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, sub: 'Combined goal amount', color: 'text-blue-400', bg: 'bg-blue-500/10', icon: Target },
+                            { label: 'Overall Progress', value: `${overallPct}%`, sub: overallPct >= 75 ? 'Almost there!' : overallPct >= 50 ? 'Halfway there' : 'Keep going!', color: overallPct >= 75 ? 'text-emerald-500' : overallPct >= 50 ? 'text-amber-500' : 'text-rose-400', bg: overallPct >= 75 ? 'bg-emerald-500/10' : overallPct >= 50 ? 'bg-amber-500/10' : 'bg-rose-500/10', icon: TrendingUp },
+                        ].map(stat => (
+                            <div key={stat.label} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-4 hover:shadow-lg hover:border-[var(--primary)]/30 transition-all duration-300">
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">{stat.label}</span>
+                                    <div className={`w-7 h-7 rounded-lg ${stat.bg} flex items-center justify-center`}>
+                                        <stat.icon size={14} className={stat.color} />
+                                    </div>
+                                </div>
+                                <div className={`text-2xl font-black tracking-tight ${stat.color}`}>{stat.value}</div>
+                                <div className="text-[10px] text-[var(--text-muted)] mt-1 font-medium">{stat.sub}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold tracking-tight transition-colors duration-500">Growth Plan</h2>
+                    <button onClick={() => { setEditingGoal(null); setIsGoalModalOpen(true); }} className="bg-[#2A9D8F] text-white px-5 py-2.5 rounded-xl flex items-center gap-2 hover:bg-[#268e81] transition-all shadow-lg shadow-teal-900/20 dark:shadow-none font-medium"><Plus size={18} /> Create Goal</button>
+                </div>
+
+                <Card
+                    leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Contribution Patterns</span>}
+                    action={<YearDropdown value={savingsYear} onChange={setSavingsYear} years={availableYears} label="Savings Patterns" />}
+                >
+                    <MonthlySavingsChart contributions={activeContributions} goals={activeGoals} selectedYear={savingsYear} />
+                </Card>
+
+                {/* Moved Savings Progress Card Here */}
+                <Card leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Overall Savings Progress</span>} className="mb-6">
+                    <div className="space-y-5">
+                        {activeGoals.length === 0 ? <p className="text-slate-400 text-sm text-center py-4">No goals created yet.</p> : activeGoals.map(goal => (
+                            <div key={goal.id} className="space-y-2">
+                                <div className="flex justify-between text-sm"><span className="font-semibold transition-colors duration-500">{goal.name}</span><span className="text-slate-500 font-medium">{goal.target > 0 ? Math.round((goal.current / goal.target) * 100) : 0}%</span></div>
+                                <ProgressBar progress={goal.target > 0 ? (goal.current / goal.target) * 100 : 0} color={goal.color} />
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {activeGoals.length === 0 ? <div className="col-span-full py-20 text-center bg-white dark:bg-slate-900 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 transition-all duration-500"><Target className="mx-auto text-slate-300 mb-4" size={48} /><p className="text-slate-500">No savings goals yet for {currentProfileName}. Start small!</p></div> : goalEstimates.map(goal => (
+                        <Card key={goal.id} leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">{goal.name}</span>} action={
+                            <div className="flex gap-2">
+                                <button onClick={() => { setEditingGoal(goal); setIsGoalModalOpen(true); }} className="text-slate-300 hover:text-[#2A9D8F] transition-colors"><Edit2 size={16} /></button>
+                                <button onClick={() => deleteGoal(goal.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
+                            </div>
+                        }>
+                            <div className="mt-2 mb-6">
+                                <div className="text-3xl font-bold tracking-tight transition-colors duration-500">${goal.current.toLocaleString()}</div>
+                                <div className="text-slate-400 text-sm font-medium mt-1">Target: ${goal.target.toLocaleString()}</div>
+                                {goal.monthsLeft !== null && (
+                                    <div className="flex items-center gap-1.5 mt-2">
+                                        <Clock size={11} className="text-[var(--primary)]" />
+                                        <span className="text-[11px] font-bold text-[var(--primary)]">
+                                            ~{goal.monthsLeft < 12
+                                                ? `${goal.monthsLeft} month${goal.monthsLeft !== 1 ? 's' : ''}`
+                                                : `${Math.round(goal.monthsLeft / 12 * 10) / 10} years`} to goal
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="space-y-2"><div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest"><span>Progress</span><span>{goal.target > 0 ? Math.round((goal.current / goal.target) * 100) : 0}%</span></div><ProgressBar progress={goal.target > 0 ? (goal.current / goal.target) * 100 : 0} color={goal.color} /></div>
+                            <form onSubmit={(e) => {
+                                e.preventDefault();
+                                const amount = parseFloat(e.target.contribution.value);
+                                const date = e.target.contributionDate.value;
+                                contributeToGoal(goal.id, amount, date);
+                                e.target.reset();
+                            }} className="mt-6 space-y-3">
+                                <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                        <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input id={`contribution-${goal.id}`} name="contribution" type="number" step="0.01" required placeholder="0.00" className="w-full pl-8 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-sm font-medium border-none ring-1 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-[#2A9D8F] outline-none transition-all duration-500" />
+                                    </div>
+                                    <button type="submit" className="px-5 py-2.5 bg-[#2A9D8F] text-white rounded-xl text-sm font-bold hover:bg-[#268e81] transition-all shadow-sm active:scale-95">Add</button>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Calendar size={12} className="text-slate-400" />
+                                    <input
+                                        name="contributionDate"
+                                        type="date"
+                                        defaultValue={formatDate(TODAY)}
+                                        required
+                                        className="bg-transparent border-none text-[10px] font-bold text-slate-400 uppercase tracking-wider p-0 focus:ring-0 cursor-pointer"
+                                    />
+                                </div>
+                            </form>
+                        </Card>
                     ))}
                 </div>
-            </Card>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {activeGoals.length === 0 ? <div className="col-span-full py-20 text-center bg-white dark:bg-slate-900 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 transition-all duration-500"><Target className="mx-auto text-slate-300 mb-4" size={48} /><p className="text-slate-500">No savings goals yet for {currentProfileName}. Start small!</p></div> : activeGoals.map(goal => (
-                    <Card key={goal.id} leftAction={<span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">{goal.name}</span>} action={
-                        <div className="flex gap-2">
-                            <button onClick={() => { setEditingGoal(goal); setIsGoalModalOpen(true); }} className="text-slate-300 hover:text-[#2A9D8F] transition-colors"><Edit2 size={16} /></button>
-                            <button onClick={() => deleteGoal(goal.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
-                        </div>
-                    }>
-                        <div className="mt-2 mb-6"><div className="text-3xl font-bold tracking-tight transition-colors duration-500">${goal.current.toLocaleString()}</div><div className="text-slate-400 text-sm font-medium mt-1">Target: ${goal.target.toLocaleString()}</div></div>
-                        <div className="space-y-2"><div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest"><span>Progress</span><span>{goal.target > 0 ? Math.round((goal.current / goal.target) * 100) : 0}%</span></div><ProgressBar progress={goal.target > 0 ? (goal.current / goal.target) * 100 : 0} color={goal.color} /></div>
-                        <form onSubmit={(e) => {
-                            e.preventDefault();
-                            const amount = parseFloat(e.target.contribution.value);
-                            const date = e.target.contributionDate.value;
-                            contributeToGoal(goal.id, amount, date);
-                            e.target.reset();
-                        }} className="mt-6 space-y-3">
-                            <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input id={`contribution-${goal.id}`} name="contribution" type="number" step="0.01" required placeholder="0.00" className="w-full pl-8 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-sm font-medium border-none ring-1 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-[#2A9D8F] outline-none transition-all duration-500" />
-                                </div>
-                                <button type="submit" className="px-5 py-2.5 bg-[#2A9D8F] text-white rounded-xl text-sm font-bold hover:bg-[#268e81] transition-all shadow-sm active:scale-95">Add</button>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Calendar size={12} className="text-slate-400" />
-                                <input
-                                    name="contributionDate"
-                                    type="date"
-                                    defaultValue={formatDate(TODAY)}
-                                    required
-                                    className="bg-transparent border-none text-[10px] font-bold text-slate-400 uppercase tracking-wider p-0 focus:ring-0 cursor-pointer"
-                                />
-                            </div>
-                        </form>
-                    </Card>
-                ))}
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div id="app-root" className="dark min-h-screen bg-[var(--bg-main)] text-[var(--text-heading)] font-sans selection:bg-[var(--primary)] selection:text-white transition-colors duration-500 ease-in-out">
+            {/* Global Toast Notifications */}
+            <ToastContainer toasts={toasts} removeToast={removeToast} />
+
             <nav className="fixed bottom-0 w-full md:left-0 md:top-0 md:h-full md:w-20 lg:w-64 bg-[var(--bg-card)]/80 dark:bg-[#161b22] backdrop-blur-xl border-t md:border-t-0 md:border-r border-[var(--border)] dark:border-[#30363d] z-50 transition-all duration-500 ease-in-out">
                 <div className="flex flex-row md:flex-col h-full items-center md:items-stretch py-4 lg:px-6">
-                    <div className="hidden lg:flex items-center gap-3 mb-12 px-2 pt-4"><div className="w-10 h-10 bg-[var(--primary)] rounded-xl flex items-center justify-center text-white shadow-lg" style={{ boxShadow: '0 10px 15px -3px var(--shadow-primary)' }}><Wallet size={24} /></div><span className="text-xl font-bold tracking-tight">FinTrack</span></div>
-                    <div className="flex-1 flex flex-row md:flex-col justify-around md:justify-start gap-3 w-full px-2">
+                    {/* Logo + Version */}
+                    <div className="hidden lg:flex items-center gap-3 mb-12 px-2 pt-4">
+                        <div className="w-10 h-10 bg-[var(--primary)] rounded-xl flex items-center justify-center text-white shadow-lg" style={{ boxShadow: '0 10px 15px -3px var(--shadow-primary)' }}><Wallet size={24} /></div>
+                        <div>
+                            <span className="text-xl font-bold tracking-tight block leading-none">FinTrack</span>
+                            <span className="text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-widest">v2.0 · Pro</span>
+                        </div>
+                    </div>
+
+                    {/* Nav Items */}
+                    <div className="flex-1 flex flex-row md:flex-col justify-around md:justify-start gap-1.5 w-full px-2">
                         {[
                             { id: 'dashboard', icon: Home, label: 'Home' },
                             { id: 'budget', icon: CreditCard, label: 'Budget' },
@@ -3426,17 +3876,90 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                             { id: 'savings', icon: Target, label: 'Savings' },
                             { id: 'investments', icon: TrendingUp, label: 'Investments' },
                         ].map((item) => (
-                            <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3.5 rounded-2xl transition-all duration-200 ${view === item.id ? 'bg-[var(--primary)] text-white shadow-lg' : 'text-[var(--text-body)] hover:text-[var(--text-heading)] hover:bg-[var(--border)]'}`} style={view === item.id ? { boxShadow: '0 10px 15px -3px var(--shadow-primary)' } : {}}><item.icon size={22} /><span className="hidden lg:block font-bold text-sm tracking-wide">{item.label}</span></button>
+                            <button
+                                key={item.id}
+                                onClick={() => setView(item.id)}
+                                className={`relative flex items-center gap-3 p-3.5 rounded-2xl transition-all duration-200 group ${view === item.id
+                                    ? 'bg-[var(--primary)] text-white shadow-lg'
+                                    : 'text-[var(--text-body)] hover:text-[var(--text-heading)] hover:bg-[var(--border)]'
+                                    }`}
+                                style={view === item.id ? { boxShadow: '0 10px 15px -3px var(--shadow-primary)' } : {}}
+                            >
+                                {/* Active left-border indicator (desktop only) */}
+                                {view === item.id && (
+                                    <span className="hidden md:block absolute -left-6 top-1/2 -translate-y-1/2 w-1 h-6 bg-white/60 rounded-r-full" />
+                                )}
+                                <item.icon size={22} />
+                                <span className="hidden lg:block font-bold text-sm tracking-wide">{item.label}</span>
+                            </button>
                         ))}
                     </div>
-                    <div className="px-2 md:w-full"><button onClick={() => setIsProfileModalOpen(true)} className="flex items-center gap-3 p-3.5 rounded-2xl transition-all duration-200 text-[var(--text-body)] hover:text-[var(--text-heading)] hover:bg-[var(--border)] w-full"><User size={22} /><span className="hidden lg:block font-bold text-sm tracking-wide">{currentProfileName}</span></button></div>
+
+                    {/* Divider + Profile */}
+                    <div className="px-2 md:w-full">
+                        <div className="hidden lg:flex items-center gap-2 mb-2 px-1">
+                            <div className="flex-1 h-px bg-[var(--border)]" />
+                            <span className="text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-widest">Account</span>
+                            <div className="flex-1 h-px bg-[var(--border)]" />
+                        </div>
+                        <button
+                            onClick={() => setIsProfileModalOpen(true)}
+                            className="flex items-center gap-3 p-3.5 rounded-2xl transition-all duration-200 text-[var(--text-body)] hover:text-[var(--text-heading)] hover:bg-[var(--border)] w-full group"
+                        >
+                            <div className="w-6 h-6 rounded-full bg-[var(--primary)]/20 flex items-center justify-center text-[var(--primary)] text-xs font-black shrink-0">
+                                {currentProfileName.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="hidden lg:block text-left min-w-0">
+                                <div className="font-bold text-sm tracking-wide truncate">{currentProfileName}</div>
+                                <div className="text-[9px] text-[var(--text-muted)] uppercase tracking-widest">Switch Profile</div>
+                            </div>
+                        </button>
+                    </div>
                 </div>
             </nav>
 
             <main className="md:pl-20 lg:pl-64 pb-24 md:pb-8">
-                <header className="sticky top-0 bg-[var(--bg-card)]/70 dark:bg-black/70 backdrop-blur-lg z-40 border-b border-[var(--border)]/50 px-8 py-6 flex justify-between items-center transition-colors duration-500 ease-in-out">
-                    <div><h1 className="text-xl font-black uppercase tracking-tighter text-[var(--text-heading)] transition-colors duration-500">{view === 'dashboard' ? 'Home' : view === 'budget' ? 'Bill Ledger' : view === 'income' ? 'Income Stream' : view === 'investments' ? 'Investments' : 'Growth Plan'}</h1><p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Financial Intelligence System</p></div>
-                    <div className="flex items-center gap-3">
+                <header className="sticky top-0 bg-[var(--bg-card)]/70 dark:bg-black/70 backdrop-blur-lg z-40 border-b border-[var(--border)]/50 px-8 py-5 flex justify-between items-center transition-colors duration-500 ease-in-out">
+                    <div>
+                        <h1 className="text-xl font-black uppercase tracking-tighter text-[var(--text-heading)] transition-colors duration-500">
+                            {view === 'dashboard' ? 'Home' : view === 'budget' ? 'Bill Ledger' : view === 'income' ? 'Income Stream' : view === 'investments' ? 'Investments' : 'Growth Plan'}
+                        </h1>
+                        <p className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-widest mt-0.5 flex items-center gap-1.5">
+                            <Clock size={9} />
+                            Financial Intelligence System · Updated {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {/* Notification Bell */}
+                        <button
+                            onClick={() => setIsDueSoonModalOpen(true)}
+                            className="relative p-2.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-body)] hover:text-[var(--text-heading)] hover:border-[var(--primary)] transition-all duration-300"
+                            title={`${metrics.dueSoonBills.length} bill(s) due soon`}
+                        >
+                            <Bell size={18} />
+                            {metrics.dueSoonBills.length > 0 && (
+                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                                    {metrics.dueSoonBills.length}
+                                </span>
+                            )}
+                        </button>
+
+                        {/* Theme Cycle Button */}
+                        <button
+                            onClick={() => {
+                                const palettes = Object.keys(COLOR_PALETTES);
+                                const currentIdx = palettes.indexOf(colorPalette);
+                                const nextPalette = palettes[(currentIdx + 1) % palettes.length];
+                                setColorPalette(nextPalette);
+                                showToast(`Theme: ${COLOR_PALETTES[nextPalette]?.name || nextPalette}`, 'info');
+                            }}
+                            className="p-2.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-body)] hover:text-[var(--text-heading)] hover:border-[var(--primary)] transition-all duration-300"
+                            title="Cycle Theme"
+                        >
+                            <Palette size={18} />
+                        </button>
+
+                        {/* AI Settings */}
                         <button
                             onClick={() => setIsAISettingsOpen(true)}
                             className="p-2.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-body)] hover:text-[var(--text-heading)] hover:border-[var(--primary)] transition-all duration-300"
@@ -3444,13 +3967,34 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                         >
                             <Settings size={18} />
                         </button>
+
+                        {/* AI Analysis — Chat-style bar */}
                         <button
                             onClick={handleAnalyzeFinances}
-                            className="p-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-white hover:shadow-lg hover:scale-110 transition-all duration-300 group relative overflow-hidden"
-                            title="AI Financial Analysis (Gemini)"
+                            title="AI Financial Analysis"
+                            className="group relative flex items-center gap-2.5 pl-3.5 pr-1.5 py-1.5 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] hover:border-purple-500/50 transition-all duration-300 overflow-hidden"
+                            style={{ boxShadow: '0 0 0 0 rgba(168,85,247,0)' }}
+                            onMouseEnter={e => e.currentTarget.style.boxShadow = '0 0 18px 2px rgba(168,85,247,0.18)'}
+                            onMouseLeave={e => e.currentTarget.style.boxShadow = '0 0 0 0 rgba(168,85,247,0)'}
                         >
-                            <div className="absolute inset-0 bg-white/20 transform translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
-                            <Sparkles size={20} className="relative z-10" />
+                            {/* Subtle animated gradient shimmer */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-purple-600/0 via-purple-500/5 to-purple-600/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+
+                            {/* Sparkle icon */}
+                            <Sparkles size={15} className="text-purple-400 shrink-0 relative z-10 group-hover:text-purple-300 transition-colors duration-200" />
+
+                            {/* Placeholder text — hidden on small screens */}
+                            <span className="hidden lg:block text-[13px] text-[var(--text-muted)] group-hover:text-[var(--text-body)] transition-colors duration-200 relative z-10 pr-1 whitespace-nowrap select-none">
+                                Ask AI about your finances...
+                            </span>
+
+                            {/* Send button */}
+                            <div className="relative z-10 w-7 h-7 rounded-xl bg-purple-600 group-hover:bg-purple-500 flex items-center justify-center transition-all duration-200 group-hover:shadow-lg group-hover:shadow-purple-500/30 shrink-0">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="22" y1="2" x2="11" y2="13" />
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                </svg>
+                            </div>
                         </button>
                     </div>
                 </header>
@@ -3459,7 +4003,7 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                     {view === 'budget' && <BudgetTracker />}
                     {view === 'income' && <IncomeTracker />}
                     {view === 'savings' && <SavingsTracker />}
-                    {view === 'investments' && <Investments goals={activeGoals} portfolioData={portfolioData} setPortfolioData={setPortfolioData} cashBalance={cashBalance} setCashBalance={setCashBalance} profiles={profiles} activeProfileId={activeProfileId} aiProvider={aiProvider} setAiProvider={setAiProvider} aiApiKeys={aiApiKeys} setAiApiKeys={setAiApiKeys} />}
+                    {view === 'investments' && <Investments goals={activeGoals} portfolioData={portfolioData} setPortfolioData={setPortfolioData} cashBalance={cashBalance} setCashBalance={setCashBalance} profiles={profiles} activeProfileId={activeProfileId} aiProvider={aiProvider} setAiProvider={setAiProvider} aiApiKeys={aiApiKeys} setAiApiKeys={setAiApiKeys} apiKey={finnhubApiKey} setApiKey={setFinnhubApiKey} />}
                 </div>
             </main>
 
@@ -3907,85 +4451,195 @@ Focus on extracting 5-10 of the most important, actionable items from the "Short
                 </div>
             </Modal>
 
-            {/* AI Analysis Modal */}
-            <Modal isOpen={isAIAnalysisOpen} onClose={() => setIsAIAnalysisOpen(false)} title="AI Financial Analysis">
-                <div className="space-y-4">
-                    {/* Missing Info Warning */}
-                    {(() => {
-                        const currentProfile = profiles.find(p => p.id === activeProfileId);
-                        const isMissingInfo = !currentProfile?.birthday || !currentProfile?.preTaxIncome;
-                        if (isMissingInfo && !isAnalyzing) {
-                            return (
-                                <div
-                                    onClick={() => { setIsAIAnalysisOpen(false); setIsEditProfileModalOpen(true); }}
-                                    className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-xl border border-amber-100 dark:border-amber-800/50 flex items-center justify-between cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors group"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-amber-100 dark:bg-amber-800/50 rounded-full text-amber-600 dark:text-amber-400">
-                                            <AlertCircle size={18} />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wide">Improve Your Analysis</h4>
-                                            <p className="text-xs text-slate-500 dark:text-slate-400">Add your <strong>Investment Info</strong> for more tailored insights.</p>
-                                        </div>
-                                    </div>
-                                    <ArrowUpRight size={16} className="text-amber-400 group-hover:text-amber-600 dark:text-amber-600 dark:group-hover:text-amber-400 transition-colors" />
-                                </div>
-                            );
-                        }
-                        return null;
-                    })()}
+            {/* AI Analysis — Chat Panel */}
+            {isAIAnalysisOpen && (
+                <div className="fixed inset-0 z-[60] flex items-stretch justify-end">
+                    {/* Backdrop */}
+                    <div
+                        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+                        onClick={() => setIsAIAnalysisOpen(false)}
+                    />
 
-                    {isAnalyzing ? (
-                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                            <div className="relative">
-                                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse rounded-full"></div>
-                                <Sparkles size={48} className="text-indigo-500 animate-bounce relative z-10" />
+                    {/* Chat Panel */}
+                    <div className="relative w-full max-w-lg flex flex-col bg-[#0d1117] border-l border-[#30363d] shadow-2xl animate-in slide-in-from-right duration-300 h-full">
+
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-[#30363d] shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center">
+                                    <Sparkles size={15} className="text-purple-400" />
+                                </div>
+                                <div>
+                                    <div className="text-sm font-bold text-white leading-none">AI Financial Analysis</div>
+                                    <div className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-widest">
+                                        {aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'claude' ? 'Anthropic Claude' : 'OpenAI ChatGPT'}
+                                    </div>
+                                </div>
                             </div>
-                            <p className="text-sm font-bold text-slate-600 dark:text-slate-300">Analyzing your finances...</p>
-                            <p className="text-xs text-slate-400 mt-1">This may take a few moments</p>
-                        </div>
-                    ) : analysisResult ? (
-                        <>
-                            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-6 max-h-[55vh] overflow-y-auto">
-                                <div
-                                    className="prose prose-sm dark:prose-invert max-w-none"
-                                    dangerouslySetInnerHTML={{ __html: formatMarkdown(analysisResult) }}
-                                />
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(analysisResult);
-                                        alert('Analysis copied!');
-                                    }}
-                                    className="p-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
-                                    title="Copy to clipboard"
-                                >
-                                    <Copy size={18} />
-                                </button>
-                                <button
-                                    onClick={generateNewAnalysis}
-                                    className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-bold hover:shadow-lg transition-all"
-                                >
-                                    Generate New Analysis
-                                </button>
+                            <div className="flex items-center gap-1.5">
+                                {analysisResult && (
+                                    <>
+                                        <button
+                                            onClick={() => { navigator.clipboard.writeText(analysisResult); showToast('Analysis copied!', 'success'); }}
+                                            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all"
+                                            title="Copy analysis"
+                                        >
+                                            <Copy size={15} />
+                                        </button>
+                                        <button
+                                            onClick={generateNewAnalysis}
+                                            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all"
+                                            title="Regenerate"
+                                        >
+                                            <RefreshCw size={15} />
+                                        </button>
+                                    </>
+                                )}
                                 <button
                                     onClick={() => setIsAIAnalysisOpen(false)}
-                                    className="px-6 py-3 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
+                                    className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all ml-1"
                                 >
-                                    Close
+                                    <X size={16} />
                                 </button>
                             </div>
-                        </>
-                    ) : (
-                        <div className="text-center py-12">
-                            <Sparkles size={48} className="mx-auto text-[#2A9D8F] mb-4" />
-                            <p className="text-sm text-slate-500">Click "AI Analysis" to start</p>
                         </div>
-                    )}
+
+                        {/* Missing info banner */}
+                        {(() => {
+                            const currentProfile = profiles.find(p => p.id === activeProfileId);
+                            const isMissingInfo = !currentProfile?.birthday || !currentProfile?.preTaxIncome;
+                            if (isMissingInfo && !isAnalyzing) {
+                                return (
+                                    <button
+                                        onClick={() => { setIsAIAnalysisOpen(false); setIsEditProfileModalOpen(true); }}
+                                        className="mx-4 mt-3 flex items-center gap-3 px-4 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-left hover:bg-amber-500/15 transition-all shrink-0 group"
+                                    >
+                                        <AlertCircle size={14} className="text-amber-400 shrink-0" />
+                                        <span className="text-xs text-amber-400/80">Add <strong className="text-amber-400">Investment Info</strong> for more tailored insights</span>
+                                        <ArrowUpRight size={12} className="text-amber-500 ml-auto shrink-0 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                                    </button>
+                                );
+                            }
+                            return null;
+                        })()}
+
+                        {/* Message Thread */}
+                        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5 min-h-0">
+                            {chatMessages.length === 0 && !isAnalyzing ? (
+                                /* Empty state */
+                                <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+                                    <div className="relative mb-5">
+                                        <div className="absolute inset-0 bg-purple-500 blur-2xl opacity-10 rounded-full scale-150" />
+                                        <div className="relative w-14 h-14 rounded-2xl bg-purple-600/15 border border-purple-500/20 flex items-center justify-center">
+                                            <Sparkles size={24} className="text-purple-400" />
+                                        </div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400">Ready to analyze your finances</p>
+                                    <p className="text-xs text-slate-600 mt-1.5 max-w-[220px] leading-relaxed">Ask a question below or click the send button to get a full financial analysis</p>
+                                    <button
+                                        onClick={generateNewAnalysis}
+                                        className="mt-6 flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-purple-900/30"
+                                    >
+                                        <Sparkles size={14} />
+                                        Run Full Analysis
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    {chatMessages.map((msg, i) =>
+                                        msg.role === 'user' ? (
+                                            /* User bubble — right aligned */
+                                            <div key={i} className="flex justify-end">
+                                                <div className="max-w-[80%]">
+                                                    <div className="bg-[#2d333b] border border-[#444c56] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm text-slate-200 leading-relaxed">
+                                                        {msg.content}
+                                                    </div>
+                                                    <div className="flex justify-end mt-1 mr-1">
+                                                        <span className="text-[10px] text-slate-600">{msg.timestamp}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            /* AI bubble — left aligned */
+                                            <div key={i} className="flex items-start gap-3">
+                                                <div className="w-7 h-7 rounded-full bg-purple-600/20 border border-purple-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <Sparkles size={13} className="text-purple-400" />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl rounded-tl-sm px-5 py-4">
+                                                        <div
+                                                            className="prose prose-sm prose-invert max-w-none text-slate-300 leading-relaxed [&_strong]:text-white [&_h1]:text-white [&_h2]:text-white [&_h3]:text-slate-100 [&_li]:text-slate-300 [&_ul]:pl-4 [&_ol]:pl-4"
+                                                            dangerouslySetInnerHTML={{ __html: formatMarkdown(msg.content) }}
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center gap-1 mt-1.5 ml-1">
+                                                        <span className="text-[10px] text-slate-600">
+                                                            {aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : 'ChatGPT'}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-700">·</span>
+                                                        <span className="text-[10px] text-slate-600">{msg.timestamp}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )
+                                    )}
+
+                                    {/* Typing indicator — shown at the bottom of the thread while loading */}
+                                    {isAnalyzing && (
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-7 h-7 rounded-full bg-purple-600/20 border border-purple-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                                                <Sparkles size={13} className="text-purple-400" />
+                                            </div>
+                                            <div className="bg-[#161b22] border border-[#30363d] rounded-2xl rounded-tl-sm px-4 py-3.5">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                    <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                    <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-2">Thinking...</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+
+                        {/* Chat Input Bar */}
+                        <div className="px-4 pb-5 pt-3 border-t border-[#30363d] shrink-0">
+                            <div className="relative flex items-end gap-2 bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-3 focus-within:border-purple-500/50 transition-colors">
+                                <textarea
+                                    value={followUpQuestion}
+                                    onChange={(e) => { setFollowUpQuestion(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'; }}
+                                    placeholder={analysisResult ? "Ask a follow-up question..." : "Ask about your finances..."}
+                                    className="flex-1 bg-transparent border-none outline-none text-sm text-slate-200 placeholder:text-slate-600 resize-none leading-relaxed min-h-[22px] max-h-[120px] overflow-y-auto"
+                                    rows={1}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            if (followUpQuestion.trim()) {
+                                                handleAskFollowUp();
+                                            } else {
+                                                generateNewAnalysis();
+                                            }
+                                        }
+                                    }}
+                                />
+                                <button
+                                    onClick={() => followUpQuestion.trim() ? handleAskFollowUp() : generateNewAnalysis()}
+                                    disabled={isAnalyzing}
+                                    className="w-8 h-8 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-all shadow-lg shadow-purple-900/30 shrink-0 self-end"
+                                >
+                                    {isAnalyzing
+                                        ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+                                    }
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-slate-700 mt-2 text-center">Enter to send · Shift+Enter for new line</p>
+                        </div>
+                    </div>
                 </div>
-            </Modal>
+            )}
 
             {/* Dividend Notification Bot UI */}
             {

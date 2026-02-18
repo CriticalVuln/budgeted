@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import usePersistentState from './hooks/usePersistentState';
-import { Plus, Trash2, RefreshCw, PieChart, TrendingUp, AlertCircle, Save, ChevronRight, ArrowLeft, History, Folder, Search, MoreHorizontal, DollarSign, Sparkles, Copy, ArrowUpRight, Settings, X } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, PieChart, TrendingUp, AlertCircle, Save, ChevronRight, ArrowLeft, History, Folder, Search, MoreHorizontal, DollarSign, Sparkles, Copy, ArrowUpRight, Settings, X, CircleHelp, BadgeInfo, Scale, Edit2, Share2, Minus } from 'lucide-react';
 
 // Helper to format date as YYYY-MM-DD
 const formatDate = (date) => {
@@ -33,162 +33,331 @@ type Transaction = {
     shares: number;
     price: number;
 };
-
-    price: number;
-};
 */
-const GainLossLineChart = ({ history = [] }) => {
-    const containerRef = useRef(null);
-    const [hoveredPoint, setHoveredPoint] = useState(null);
 
-    // Filter to ensure we have valid history
-    const rawHistory = history.filter(h => !isNaN(h.value));
+const PortfolioPerformanceChart = ({ plHistory = [], benchmarkData = {}, selectedYear }) => {
+    const svgRef = useRef(null);
+    const [tooltip, setTooltip] = useState(null);
 
-    // Generate weekly data points, interpolating if data is missing
-    const validHistory = useMemo(() => {
-        if (rawHistory.length === 0) return [];
+    // Generate 52 weeks for the selected year
+    const weeks = useMemo(() => {
+        const w = [];
+        const d = new Date(selectedYear, 0, 1);
+        while (d.getFullYear() === selectedYear) {
+            w.push(new Date(d));
+            d.setDate(d.getDate() + 7);
+        }
+        return w;
+    }, [selectedYear]);
 
-        const sortedRaw = [...rawHistory].sort((a, b) => new Date(a.date) - new Date(b.date));
-        const startEntry = sortedRaw[0];
-        const endEntry = sortedRaw[sortedRaw.length - 1];
+    // Map history to the 52-week skeleton
+    const processSeries = (data, isBenchmark = false) => {
+        if (!data) return weeks.map(d => ({ date: d.toISOString().split('T')[0], val: null }));
 
-        const startDate = new Date(startEntry.date);
-        const endDate = new Date(endEntry.date);
+        const dataMap = new Map(data.map(d => [d.date, d.value]));
+        const sortedData = [...data].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        const generatedHistory = [];
+        let lastVal = 0;
+        const now = new Date();
+        const startOfYear = new Date(selectedYear, 0, 1);
 
-        let currentDate = new Date(startDate);
+        return weeks.map(weekDate => {
+            const dateStr = weekDate.toISOString().split('T')[0];
 
-        // Loop through dates week by week
-        while (currentDate <= endDate) {
-            const dateStr = currentDate.toISOString().split('T')[0];
-
-            // Try to find exact match
-            const exactMatch = sortedRaw.find(h => h.date === dateStr);
-            if (exactMatch) {
-                generatedHistory.push(exactMatch);
-            } else {
-                // Interpolate
-                // Find prev known
-                let prev = sortedRaw[0];
-                for (let i = 0; i < sortedRaw.length; i++) {
-                    if (new Date(sortedRaw[i].date) <= currentDate) prev = sortedRaw[i];
-                    else break;
-                }
-
-                // Find next known
-                let next = sortedRaw[sortedRaw.length - 1];
-                for (let i = sortedRaw.length - 1; i >= 0; i--) {
-                    if (new Date(sortedRaw[i].date) >= currentDate) next = sortedRaw[i];
-                    else break;
-                }
-
-                if (!prev || !next || prev === next) {
-                    generatedHistory.push({ date: dateStr, value: prev ? prev.value : 0 });
-                } else {
-                    const prevTime = new Date(prev.date).getTime();
-                    const nextTime = new Date(next.date).getTime();
-                    const curTime = currentDate.getTime();
-                    const ratio = (curTime - prevTime) / (nextTime - prevTime);
-                    const interpolatedValue = prev.value + (next.value - prev.value) * ratio;
-                    generatedHistory.push({ date: dateStr, value: interpolatedValue });
-                }
+            // Future check
+            if (weekDate > now) {
+                return { date: dateStr, val: null };
             }
 
-            // Advance 1 week (7 days)
-            currentDate.setDate(currentDate.getDate() + 7);
-        }
+            // Find closest data point <= weekDate
+            let closest = null;
+            const validPoints = sortedData.filter(d => new Date(d.date) <= weekDate);
+            if (validPoints.length > 0) {
+                closest = validPoints[validPoints.length - 1];
+            }
 
-        // Ensure final 'current' point is the very last point and valid logic for displaying graph
-        const finalGenerated = generatedHistory[generatedHistory.length - 1];
-        const lastRawDate = new Date(endEntry.date);
+            let val = closest ? closest.value : 0; // Default to 0 if no history yet (backfill)
 
-        // If our last generated point is significantly before the actual end date
-        if (!finalGenerated || new Date(finalGenerated.date).getTime() < lastRawDate.getTime()) {
-            generatedHistory.push(endEntry);
-        }
-
-        return generatedHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
-    }, [rawHistory]);
-
-    if (validHistory.length === 0) return (
-        <div className="h-32 flex items-center justify-center text-slate-400 text-sm font-medium border border-dashed border-slate-200 dark:border-[#30363d] rounded-xl bg-slate-50/50 dark:bg-[#0d1117]/20">
-            Waiting for data...
-        </div>
-    );
-
-    const height = 180;
-    const padding = 20;
-
-    // Calculate scales
-    const values = validHistory.map(d => d.value);
-    const minVal = Math.min(0, ...values); // Always include 0 line?
-    const maxVal = Math.max(0, ...values);
-
-    // Add some padding to Y domain
-    const range = maxVal - minVal || 100;
-    const yMin = minVal - (range * 0.1);
-    const yMax = maxVal + (range * 0.1);
-
-    const getX = (index) => {
-        if (validHistory.length <= 1) return 50; // Center single point? No, just left
-        return (index / (validHistory.length - 1)) * 100;
+            return { date: dateStr, val: val };
+        });
     };
 
-    const getY = (value) => {
-        return height - ((value - yMin) / (yMax - yMin)) * height;
+    // For benchmarks, we still normalize relative to start of year (or whenever)
+    // Actually, benchmarks are raw prices. We need to normalize to % relative to Jan 1 (or first data point).
+    const normalize = (series, isAlreadyPercent) => {
+        let baseline = 0;
+        const firstPoint = series.find(p => p.val !== null);
+        if (firstPoint) baseline = firstPoint.val;
+
+        return series.map(d => {
+            if (d.val === null) return { ...d, pct: null };
+            if (isAlreadyPercent) {
+                return { ...d, pct: d.val };
+            } else {
+                if (baseline === 0) return { ...d, pct: 0 };
+                return { ...d, pct: ((d.val - baseline) / baseline) * 100 };
+            }
+        });
     };
 
-    const zeroY = getY(0);
+    const rawPortfolio = processSeries(plHistory);
+    const rawSpy = processSeries((benchmarkData.spy || []).map(d => ({ date: d.date, value: d.close })));
+    const rawQqq = processSeries((benchmarkData.qqq || []).map(d => ({ date: d.date, value: d.close })));
 
-    // Build Path
-    let d = '';
-    validHistory.forEach((point, i) => {
-        const x = getX(i);
-        const y = getY(point.value);
-        d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
-    });
+    const portfolioSeries = normalize(rawPortfolio, true);
+    const spySeries = normalize(rawSpy, false);
+    const qqqSeries = normalize(rawQqq, false);
+
+    const hasBenchmarks = spySeries.some(d => d.pct !== null);
+    const hasPortfolio = portfolioSeries.some(d => d.pct !== null);
+
+    // Y-Scale domain calculation needs to handle nulls
+    const allValues = [
+        ...portfolioSeries.map(d => d.pct),
+        ...spySeries.map(d => d.pct),
+        ...qqqSeries.map(d => d.pct)
+    ].filter(v => v !== null && !isNaN(v));
+
+    let minVal = Math.min(0, ...allValues);
+    let maxVal = Math.max(0, ...allValues);
+    // Add padding
+    const range = maxVal - minVal;
+    if (range === 0) { maxVal += 5; minVal -= 5; }
+    else { maxVal += range * 0.1; minVal -= range * 0.1; }
+
+    const H = 260; // Chart Height
+    const W = 1000; // SVG ViewBox width
+    const PAD = { top: 20, right: 30, bottom: 30, left: 40 };
+    const chartW = W - PAD.left - PAD.right;
+    const chartH = H - PAD.top - PAD.bottom;
+
+    const yScale = (val) => {
+        if (val === null) return 0;
+        return PAD.top + chartH - ((val - minVal) / (maxVal - minVal)) * chartH;
+    };
+    const zeroY = yScale(0);
+
+    const xScale = (index) => {
+        return PAD.left + (index / (weeks.length - 1)) * chartW;
+    };
+
+    // Path generators
+    const makePath = (series) => {
+        const points = series.map((d, i) => {
+            if (d.pct === null) return null;
+            return [xScale(i), yScale(d.pct)];
+        });
+
+        let d = '';
+        let isFirst = true;
+        points.forEach(p => {
+            if (!p) {
+                isFirst = true; // Next valid point starts new segment
+            } else {
+                const [x, y] = p;
+                if (isFirst) {
+                    d += `M ${x} ${y}`;
+                    isFirst = false;
+                } else {
+                    d += `L ${x} ${y}`;
+                }
+            }
+        });
+        return d;
+    };
+
+    const portfolioPath = makePath(portfolioSeries);
+    const spyPath = makePath(spySeries);
+    const qqqPath = makePath(qqqSeries);
+
+    // Y Ticks
+    const yTicks = [];
+    const tickCount = 5;
+    for (let i = 0; i < tickCount; i++) {
+        yTicks.push(minVal + (i * (maxVal - minVal)) / (tickCount - 1));
+    }
+
+    // X Axis Labels
+    const xLabels = [];
+    if (weeks.length > 0) {
+        const step = Math.ceil(weeks.length / 6);
+        for (let i = 0; i < weeks.length; i += step) {
+            xLabels.push({
+                x: xScale(i),
+                label: weeks[i].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            });
+        }
+    }
+
+    const handleMouseMove = (e) => {
+        if (!svgRef.current) return;
+        const rect = svgRef.current.getBoundingClientRect();
+        const mouseX = ((e.clientX - rect.left) / rect.width) * W;
+        const relX = mouseX - PAD.left;
+        const idx = Math.round((relX / chartW) * (weeks.length - 1));
+        const clampedIdx = Math.max(0, Math.min(weeks.length - 1, idx));
+
+        const date = weeks[clampedIdx];
+        const cx = xScale(clampedIdx);
+
+        const portMap = new Map(portfolioSeries.map(d => [d.date, d.pct]));
+        const spyMap = new Map(spySeries.map(d => [d.date, d.pct]));
+        const qqqMap = new Map(qqqSeries.map(d => [d.date, d.pct]));
+
+        setTooltip({
+            x: cx,
+            date,
+            portfolio: portMap.get(date.toISOString().split('T')[0]),
+            spy: spyMap.get(date.toISOString().split('T')[0]),
+            qqq: qqqMap.get(date.toISOString().split('T')[0]),
+        });
+    };
+
+    const isEmpty = !hasPortfolio && !hasBenchmarks;
 
     return (
-        <div className="w-full relative" ref={containerRef} onMouseLeave={() => setHoveredPoint(null)}>
-            <svg viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" className="w-full h-48 overflow-visible">
-                {/* Zero Line */}
-                <line x1="0" y1={zeroY} x2="100" y2={zeroY} stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeWidth="0.5" strokeDasharray="2 2" />
-
-                {/* Line */}
-                <path d={d} fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-
-                {/* Gradient Area below line - optional, simplified for now */}
-
-                {/* Interactive Points (invisible targets) */}
-                {validHistory.map((point, i) => (
-                    <rect
-                        key={i}
-                        x={getX(i) - 2}
-                        y="0"
-                        width="4"
-                        height={height}
-                        fill="transparent"
-                        onMouseEnter={() => setHoveredPoint({ ...point, x: getX(i), y: getY(point.value) })}
-                        className="cursor-crosshair"
-                    />
-                ))}
-
-                {/* Hover Dot */}
-                {hoveredPoint && (
-                    <circle cx={hoveredPoint.x} cy={hoveredPoint.y} r="3" className="fill-[#2A9D8F] stroke-white dark:stroke-slate-900 stroke-[1.5px] vector-effect-non-scaling-stroke" />
-                )}
-            </svg>
-
-            {hoveredPoint && (
-                <div
-                    className="absolute bg-slate-800 text-white text-[10px] font-bold py-1 px-2 rounded shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-full -mt-2 z-10 whitespace-nowrap"
-                    style={{ left: `${hoveredPoint.x}%`, top: hoveredPoint.y }}
-                >
-                    <div>{hoveredPoint.date}</div>
-                    <div className={hoveredPoint.value >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                        {hoveredPoint.value >= 0 ? '+' : ''}${hoveredPoint.value.toLocaleString()}
+        <div className="w-full">
+            {/* Legend */}
+            <div className="flex items-center justify-end gap-4 mb-4">
+                {hasPortfolio && (
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-0.5 bg-[#2A9D8F]"></div>
+                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300">PORTFOLIO</span>
                     </div>
+                )}
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-0.5 bg-blue-500"></div>
+                    <span className="text-xs font-bold text-slate-500">SPY</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-0.5 bg-purple-500"></div>
+                    <span className="text-xs font-bold text-slate-500">QQQ</span>
+                </div>
+            </div>
+
+            {isEmpty ? (
+                <div className="h-64 flex flex-col items-center justify-center text-slate-500 gap-2">
+                    <TrendingUp size={28} className="opacity-30" />
+                    <p className="text-sm font-semibold">No performance data yet</p>
+                    <p className="text-xs text-slate-600">Add transactions and sync prices to see your portfolio performance</p>
+                </div>
+            ) : (
+                <div className="relative" onMouseLeave={() => setTooltip(null)}>
+                    <svg
+                        ref={svgRef}
+                        viewBox={`0 0 ${W} ${H}`}
+                        className="w-full"
+                        style={{ height: 260 }}
+                        onMouseMove={handleMouseMove}
+                    >
+                        {/* Y grid lines + labels */}
+                        {yTicks.map((v, i) => (
+                            <g key={i}>
+                                <line
+                                    x1={PAD.left} y1={yScale(v)}
+                                    x2={W - PAD.right} y2={yScale(v)}
+                                    stroke={v === 0 ? '#475569' : '#1e293b'}
+                                    strokeWidth={v === 0 ? 1 : 0.5}
+                                    strokeDasharray={v === 0 ? '4 4' : '2 4'}
+                                />
+                                <text
+                                    x={PAD.left - 6} y={yScale(v) + 4}
+                                    textAnchor="end"
+                                    fontSize={9}
+                                    fill="#475569"
+                                    fontFamily="monospace"
+                                >
+                                    {v >= 0 ? '+' : ''}{v.toFixed(1)}%
+                                </text>
+                            </g>
+                        ))}
+
+                        {/* X axis labels */}
+                        {xLabels.map((l, i) => (
+                            <text key={i} x={l.x} y={H - 6} textAnchor="middle" fontSize={9} fill="#475569" fontFamily="sans-serif">
+                                {l.label}
+                            </text>
+                        ))}
+
+                        {/* Zero line emphasis */}
+                        <line x1={PAD.left} y1={zeroY} x2={W - PAD.right} y2={zeroY} stroke="#334155" strokeWidth={1} />
+
+                        {/* SPY line */}
+                        {spyPath && (
+                            <path d={spyPath} fill="none" stroke="#60a5fa" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" opacity={0.8} />
+                        )}
+
+                        {/* QQQ line */}
+                        {qqqPath && (
+                            <path d={qqqPath} fill="none" stroke="#c084fc" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" opacity={0.8} />
+                        )}
+
+                        {/* Portfolio line (on top) */}
+                        {portfolioPath && (
+                            <>
+                                {/* Glow effect */}
+                                <path d={portfolioPath} fill="none" stroke="#2A9D8F" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" opacity={0.15} />
+                                <path d={portfolioPath} fill="none" stroke="#2A9D8F" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                            </>
+                        )}
+
+                        {/* Hover crosshair */}
+                        {tooltip && (
+                            <>
+                                <line
+                                    x1={tooltip.x} y1={PAD.top}
+                                    x2={tooltip.x} y2={H - PAD.bottom}
+                                    stroke="#475569" strokeWidth={1} strokeDasharray="3 3"
+                                />
+                                {tooltip.portfolio !== undefined && tooltip.portfolio !== null && (
+                                    <circle cx={tooltip.x} cy={yScale(tooltip.portfolio)} r={4} fill="#2A9D8F" stroke="#0d1117" strokeWidth={2} />
+                                )}
+                                {tooltip.spy !== undefined && tooltip.spy !== null && (
+                                    <circle cx={tooltip.x} cy={yScale(tooltip.spy)} r={3.5} fill="#60a5fa" stroke="#0d1117" strokeWidth={2} />
+                                )}
+                                {tooltip.qqq !== undefined && tooltip.qqq !== null && (
+                                    <circle cx={tooltip.x} cy={yScale(tooltip.qqq)} r={3.5} fill="#c084fc" stroke="#0d1117" strokeWidth={2} />
+                                )}
+                            </>
+                        )}
+                    </svg>
+
+                    {/* Tooltip box */}
+                    {tooltip && (
+                        <div
+                            className="absolute top-2 pointer-events-none bg-[#0d1117] border border-[#30363d] rounded-xl px-3 py-2.5 shadow-2xl text-xs z-10"
+                            style={{ left: tooltip.x > W * 0.65 ? 'auto' : `calc(${(tooltip.x / W) * 100}% + 12px)`, right: tooltip.x > W * 0.65 ? `calc(${((W - tooltip.x) / W) * 100}% + 12px)` : 'auto' }}
+                        >
+                            <div className="text-slate-500 font-bold mb-1.5">{tooltip.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            {tooltip.portfolio !== undefined && tooltip.portfolio !== null && (
+                                <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="w-2 h-2 rounded-full bg-[#2A9D8F] shrink-0" />
+                                    <span className="text-slate-400">Portfolio</span>
+                                    <span className={`ml-auto font-black ${tooltip.portfolio >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {tooltip.portfolio >= 0 ? '+' : ''}{tooltip.portfolio.toFixed(2)}%
+                                    </span>
+                                </div>
+                            )}
+                            {tooltip.spy !== undefined && tooltip.spy !== null && (
+                                <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                                    <span className="text-slate-400">SPY</span>
+                                    <span className={`ml-auto font-black ${tooltip.spy >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {tooltip.spy >= 0 ? '+' : ''}{tooltip.spy.toFixed(2)}%
+                                    </span>
+                                </div>
+                            )}
+                            {tooltip.qqq !== undefined && tooltip.qqq !== null && (
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-purple-400 shrink-0" />
+                                    <span className="text-slate-400">QQQ</span>
+                                    <span className={`ml-auto font-black ${tooltip.qqq >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {tooltip.qqq >= 0 ? '+' : ''}{tooltip.qqq.toFixed(2)}%
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -275,7 +444,7 @@ const ensureRootStructure = (data) => {
 };
 
 
-const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance, setCashBalance, profiles = [], activeProfileId = 'default', aiProvider, setAiProvider, aiApiKeys, setAiApiKeys }) => {
+const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance, setCashBalance, profiles = [], activeProfileId = 'default', aiProvider, setAiProvider, aiApiKeys, setAiApiKeys, apiKey, setApiKey }) => {
     // --- State ---
     // const [rawData, setRawData] = usePersistentState('investments_portfolio_v2', null); // Lifted to App.jsx
     const rawData = portfolioData;
@@ -290,7 +459,7 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
     };
 
     const [path, setPath] = useState(['root']); // Stack of IDs, starting with root
-    const [apiKey, setApiKey] = usePersistentState('finnhub_api_key', '');
+    // const [apiKey, setApiKey] = usePersistentState('finnhub_api_key', ''); // Lifted to App.jsx
     // Cash Balance passed from props
     // const [cashBalance, setCashBalance] = usePersistentState('investments_cash', 1500.00);
 
@@ -304,7 +473,14 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
     const [error, setError] = useState(null);
 
     // Gain/Loss History State
-    const [plHistory, setPlHistory] = usePersistentState('investments_pl_history_v2', []);
+    // Gain/Loss History State (Now ROI %)
+    const [roiHistory, setRoiHistory] = usePersistentState('investments_roi_history_v1', []);
+
+    // Benchmark state
+    const [benchmarkData, setBenchmarkData] = useState({ spy: [], qqq: [] });
+    const [isFetchingBenchmarks, setIsFetchingBenchmarks] = useState(false);
+    const [hasAttemptedFetch, setHasAttemptedFetch] = useState(false);
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
     // --- Derived State ---
     const currentNode = useMemo(() => {
@@ -318,6 +494,19 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
 
         return findNode(rootNode, currentId) || rootNode;
     }, [rootNode, path]);
+
+    // Available years for history
+    const availableYears = useMemo(() => {
+        const years = new Set([new Date().getFullYear()]);
+        const traverse = (node) => {
+            if (node.transactions) {
+                node.transactions.forEach(t => years.add(new Date(t.date).getFullYear()));
+            }
+            if (node.children) node.children.forEach(traverse);
+        };
+        traverse(rootNode);
+        return [...years].sort((a, b) => b - a);
+    }, [rootNode]);
 
     const totalPortfolioValue = useMemo(() => calculateValue(rootNode) + (cashBalance || 0), [rootNode, cashBalance]);
     const currentViewValue = useMemo(() => calculateValue(currentNode), [currentNode]);
@@ -354,20 +543,54 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
 
     const totalViewTarget = childrenWithMetrics.reduce((sum, c) => sum + c.target, 0);
 
-    // Calculate Profit/Loss based on "Retirement" goal
+    // Calculate accurate Cost Basis from transactions (not Goals)
+    const totalCostBasis = useMemo(() => {
+        let cost = 0;
+        const traverse = (node) => {
+            if (node.type === 'STOCK') {
+                const txs = node.transactions || [];
+                let shares = 0;
+                let cb = 0;
+                // Sort by date to ensure proper FIFO/AvgCost handling if needed, 
+                // though simple addition works for total cost if we just track net investment.
+                // Strictly: Cost Basis = Sum(Buy * Price) - Sum(Sell * AvgCost)
+                // But for pure "Net Invested Capital" (Cash Flow), it's Buys - Sells.
+                // However, tax lots are complex. Let's stick to the Avg Cost logic used elsewhere.
+                const sortedTxs = [...txs].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                sortedTxs.forEach(t => {
+                    if (t.type === 'BUY') {
+                        shares += t.shares;
+                        cb += t.shares * t.price;
+                    } else if (t.type === 'SELL') {
+                        if (shares > 0) {
+                            const avg = cb / shares;
+                            cb -= t.shares * avg;
+                            shares -= t.shares;
+                        }
+                    }
+                });
+                cost += cb;
+            }
+            if (node.children) node.children.forEach(traverse);
+        };
+        traverse(rootNode);
+        return cost;
+    }, [rootNode]);
+
+    // Calculate Profit/Loss based on Actual Cost Basis
     const { profitLoss, roi, investedAmount } = useMemo(() => {
-        const retirementGoal = goals.find(g => g.name.toLowerCase().includes('retirement'));
-        const invested = retirementGoal ? retirementGoal.current : 0;
+        const invested = totalCostBasis;
         const pl = totalPortfolioValue - invested;
         const roiVal = invested > 0 ? (pl / invested) * 100 : 0;
 
         return { profitLoss: pl, roi: roiVal, investedAmount: invested };
-    }, [goals, totalPortfolioValue]);
+    }, [totalCostBasis, totalPortfolioValue]);
 
-    // Track History Effect
+    // Track History Effect (ROI %)
     useEffect(() => {
         const today = new Date().toISOString().split('T')[0];
-        setPlHistory(prev => {
+        setRoiHistory(prev => {
             let history = Array.isArray(prev) ? [...prev] : [];
             const startDate = '2026-01-05'; // First round of buying
 
@@ -379,14 +602,15 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
             // Check if we have an entry for today
             const lastEntryIndex = history.findIndex(h => h.date === today);
 
+            // value is now ROI %, not $ P&L
             if (lastEntryIndex !== -1) {
                 // Update today's entry
-                if (history[lastEntryIndex].value !== profitLoss) {
-                    history[lastEntryIndex] = { ...history[lastEntryIndex], value: profitLoss };
+                if (history[lastEntryIndex].value !== roi) {
+                    history[lastEntryIndex] = { ...history[lastEntryIndex], value: roi };
                 }
             } else {
                 // Add new entry for today
-                history.push({ date: today, value: profitLoss });
+                history.push({ date: today, value: roi });
             }
 
             // Ensure sorted by date
@@ -394,14 +618,37 @@ const Investments = ({ goals = [], portfolioData, setPortfolioData, cashBalance,
 
             return history;
         });
-    }, [profitLoss, setPlHistory]);
+    }, [roi, setRoiHistory]);
 
     // --- AI Analysis Logic ---
     const [isAIAnalysisOpen, setIsAIAnalysisOpen] = useState(false);
     const [isAISettingsOpen, setIsAISettingsOpen] = useState(false);
     // AI Provider and Keys passed as props
     const [analysisResult, setAnalysisResult] = usePersistentState('ai_inv_analysis_result', '');
+    const [chatMessages, setChatMessages] = useState([]); // Chat history
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+    // Follow-up State
+    const [followUpQuestion, setFollowUpQuestion] = useState('');
+
+    // --- Chart Logic ---
+    // (chartRange and benchmarkData already defined above)
+
+    // Profile Context for Header
+    const currentProfile = profiles.find(p => p.id === activeProfileId) || { name: 'My Portfolio' };
+
+    // Calculate Today's Change Logic
+    let totalDayChange = 0;
+    let totalDayChangePct = 0;
+    if (roiHistory.length >= 2) {
+        const todayROI = roiHistory[roiHistory.length - 1].value / 100;
+        const yesterdayROI = roiHistory[roiHistory.length - 2].value / 100;
+        // Approx calculation assuming constant capital for the day
+        totalDayChangePct = ((1 + todayROI) - (1 + yesterdayROI)) / (1 + yesterdayROI) * 100;
+        totalDayChange = investedAmount * (1 + yesterdayROI) * (totalDayChangePct / 100);
+    }
+
+
 
     const calculateAge = (birthday) => {
         if (!birthday) return 'Not specified';
@@ -523,10 +770,11 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
         const key = aiApiKeys[aiProvider];
         if (!key) { setIsAISettingsOpen(true); return; }
 
-        if (analysisResult) { setIsAIAnalysisOpen(true); return; }
-
         setIsAnalyzing(true);
         setIsAIAnalysisOpen(true);
+        // Clear previous chat if starting fresh? Or keep history?
+        // App.jsx clears.
+        setChatMessages([]);
         setAnalysisResult('');
 
         try {
@@ -535,9 +783,69 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
             if (aiProvider === 'gemini') result = await callGeminiAPI(prompt, key);
             else if (aiProvider === 'claude') result = await callClaudeAPI(prompt, key);
             else if (aiProvider === 'openai') result = await callOpenAIAPI(prompt, key);
+
             setAnalysisResult(result);
+            setChatMessages([{ role: 'assistant', content: result, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+        } catch (err) {
+            console.error(err);
+            setChatMessages([{ role: 'assistant', content: `**Error:** ${err.message}`, timestamp: new Date().toLocaleTimeString() }]);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
+    const handleAskFollowUp = async () => {
+        if (!followUpQuestion.trim()) return;
+
+        const key = aiApiKeys[aiProvider];
+        if (!key) { setIsAISettingsOpen(true); return; }
+
+        setIsAnalyzing(true);
+        // Add user message
+        const userMsg = { role: 'user', content: followUpQuestion, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+        setChatMessages(prev => [...prev, userMsg]);
+        setFollowUpQuestion('');
+
+        try {
+            // Get fresh context from current data
+            const portfolioPrompt = generateInvestmentAnalysisPrompt();
+
+            // Construct a focused follow-up prompt
+            const contextPrompt = `
+${portfolioPrompt}
+
+---
+
+**PREVIOUS ANALYSIS:**
+"""
+${analysisResult}
+"""
+
+**USER QUESTION:**
+"${userMsg.content}"
+
+**INSTRUCTION:**
+Answer the user's question above based on the provided portfolio data and previous analysis.
+- Be direct and concise.
+- DO NOT regenerate the full analysis.
+- Focus ONLY on answering the specific question.
+`;
+
+            let result = '';
+            if (aiProvider === 'gemini') result = await callGeminiAPI(contextPrompt, key);
+            else if (aiProvider === 'claude') result = await callClaudeAPI(contextPrompt, key);
+            else if (aiProvider === 'openai') result = await callOpenAIAPI(contextPrompt, key);
+
+            // Append the new Q&A to the existing result (backwards compatibility)
+            const newContent = `\n\n---\n\n### ❓ ${userMsg.content}\n\n${result}`;
+            setAnalysisResult(prev => prev + newContent);
+
+            // Add AI response to chat
+            setChatMessages(prev => [...prev, { role: 'assistant', content: result, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+
         } catch (e) {
-            setAnalysisResult(`Error: ${e.message}\n\nPlease check your API key.`);
+            console.error("Follow-up failed", e);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: `**Error:** ${e.message}`, timestamp: new Date().toLocaleTimeString() }]);
         } finally {
             setIsAnalyzing(false);
         }
@@ -747,6 +1055,214 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
         }
     };
 
+    // Fetch Historical Data & Reconstruct Portfolio Performance
+    // Fetch Historical Data & Reconstruct Portfolio Performance
+    const fetchPortfolioHistory = async (yearOverride) => {
+        if (!apiKey) {
+            setError('Please add your Finnhub API Key in settings to load history.');
+            setIsAISettingsOpen(true);
+            return;
+        }
+
+        // Use override or state
+        const yearToUse = yearOverride || selectedYear;
+
+        setIsFetchingBenchmarks(true);
+        setError(null); // Clear previous errors
+
+        try {
+            // 1. Gather all stock nodes
+            const stockNodes = [];
+            const gatherStocks = (node) => {
+                if (node.type === 'STOCK') stockNodes.push(node);
+                if (node.children) node.children.forEach(gatherStocks);
+            };
+            gatherStocks(rootNode);
+
+            if (stockNodes.length === 0) {
+                // No stocks, just stop
+                setIsFetchingBenchmarks(false);
+                return;
+            }
+
+            // 2. Unique symbols + Benchmarks
+            // Clean symbols: trim and uppercase
+            const symbolMap = new Map(); // name -> cleanedSymbol
+            stockNodes.forEach(n => symbolMap.set(n.name, n.name.trim().toUpperCase()));
+
+            const uniqueSymbols = [...new Set(symbolMap.values())];
+            const allRequestSymbols = [...uniqueSymbols, 'SPY', 'QQQ'];
+
+            // 3. Time range (Selected Year)
+            const startOfYear = new Date(yearToUse, 0, 1);
+            const endOfYear = new Date(yearToUse, 11, 31);
+            const today = new Date();
+
+            // If selected year is current year, end at today
+            const toDate = (yearToUse === today.getFullYear()) ? today : endOfYear;
+
+            const fromUnix = Math.floor(startOfYear.getTime() / 1000);
+            const toUnix = Math.floor(toDate.getTime() / 1000);
+
+            // 4. Fetch Candles
+            const failedSymbols = [];
+
+            const fetchCandles = async (symbol) => {
+                // Strict rate limit: 1 request per 1.1 seconds per symbol to stay safe within 60 req/min
+                await new Promise(r => setTimeout(r, 1100));
+
+                try {
+                    const res = await fetch(
+                        `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=D&from=${fromUnix}&to=${toUnix}&token=${apiKey}`
+                    );
+
+                    if (res.status === 403) {
+                        console.warn(`Finnhub 403 for ${symbol}. Check API Key.`);
+                        return { symbol, data: [], error: '403' };
+                    }
+
+                    if (!res.ok) return { symbol, data: [], error: res.status };
+
+                    const data = await res.json();
+
+                    if (data.s === 'no_data') return { symbol, data: [] }; // Not an error, just empty
+                    if (data.s !== 'ok' || !data.t) return { symbol, data: [], error: 'invalid_response' };
+
+                    return {
+                        symbol,
+                        data: data.t.map((ts, i) => ({
+                            date: new Date(ts * 1000).toISOString().split('T')[0],
+                            price: data.c[i]
+                        }))
+                    };
+                } catch (e) {
+                    console.error(`Fetch error for ${symbol}`, e);
+                    return { symbol, data: [], error: 'exception' };
+                }
+            };
+
+            const results = [];
+
+            // Sequential fetch to respect rate limits
+            for (const sym of allRequestSymbols) {
+                const res = await fetchCandles(sym);
+                results.push(res);
+                if (res.error && !['SPY', 'QQQ'].includes(sym)) {
+                    failedSymbols.push(sym);
+                }
+            }
+
+            if (failedSymbols.length > 0) {
+                setError(`Could not fetch data for: ${failedSymbols.join(', ')}. Please ensure they are valid ticker symbols.`);
+            }
+
+            // 5. Build Price Map (Symbol -> Date -> Price)
+            const priceData = {};
+            const spyData = results.find(r => r.symbol === 'SPY')?.data.map(d => ({ date: d.date, close: d.price })) || [];
+            const qqqData = results.find(r => r.symbol === 'QQQ')?.data.map(d => ({ date: d.date, close: d.price })) || [];
+
+            results.forEach(r => {
+                // Map back to original names if needed, but we use cleaned symbols for lookup
+                if (uniqueSymbols.includes(r.symbol)) {
+                    if (!priceData[r.symbol]) priceData[r.symbol] = {};
+                    r.data.forEach(d => {
+                        priceData[r.symbol][d.date] = d.price;
+                    });
+                }
+            });
+
+            setBenchmarkData({ spy: spyData, qqq: qqqData });
+
+            // 6. Reconstruct Portfolio History
+            const allDates = [...new Set(results.flatMap(r => r.data.map(d => d.date)))].sort();
+
+            if (allDates.length === 0) {
+                if (failedSymbols.length === uniqueSymbols.length) {
+                    // All failed
+                    const sampleFailed = failedSymbols.slice(0, 3).join(', ');
+                    // Check if it was 403 or just empty
+                    const isAuthError = results.some(r => r.error === '403');
+
+                    if (isAuthError) {
+                        setError("API Key Error: Access Forbidden (403). Please check your Finnhub Key.");
+                    } else {
+                        setError(`No data found for any symbols (${sampleFailed}${failedSymbols.length > 3 ? '...' : ''}). Verify they are valid tickers (e.g. AAPL, not 'Apple').`);
+                    }
+                } else {
+                    console.warn("No historical dates found overlapping with request.");
+                }
+                setIsFetchingBenchmarks(false);
+                return;
+            }
+
+            // Track last known price to handle gaps
+            const lastKnownPrices = {};
+
+            const reconstructed = allDates.map(date => {
+                // Update last known prices
+                uniqueSymbols.forEach(sym => {
+                    if (priceData[sym]?.[date]) lastKnownPrices[sym] = priceData[sym][date];
+                });
+
+                let totalValue = 0;
+                let totalInvested = 0;
+
+                stockNodes.forEach(node => {
+                    // Use the cleaned symbol for lookup
+                    const sym = symbolMap.get(node.name);
+
+                    // Calculate Holdings & Cost Basis for this node on this date
+                    let sharesOwned = 0;
+                    let costBasis = 0;
+
+                    (node.transactions || []).forEach(t => {
+                        if (t.date <= date) {
+                            if (t.type === 'BUY') {
+                                sharesOwned += t.shares;
+                                costBasis += t.shares * t.price;
+                            } else {
+                                // Sell: Reduce cost basis proportionally
+                                if (sharesOwned > 0) {
+                                    const avgCost = costBasis / sharesOwned;
+                                    costBasis -= t.shares * avgCost;
+                                    sharesOwned -= t.shares;
+                                }
+                            }
+                        }
+                    });
+
+                    totalInvested += costBasis;
+
+                    // Value using last known price
+                    const price = lastKnownPrices[sym] || 0;
+                    totalValue += sharesOwned * price;
+                });
+
+                // Calculate ROI %
+                // If nothing invested yet, ROI is 0
+                const roi = totalInvested > 0 ? ((totalValue - totalInvested) / totalInvested) * 100 : 0;
+                return { date, value: roi };
+            });
+
+            setRoiHistory(reconstructed);
+
+        } catch (err) {
+            console.error(err);
+            setError('Failed to fetch historical data.');
+        } finally {
+            setIsFetchingBenchmarks(false);
+        }
+    };
+    // Auto-reconstruct on mount or year change
+    useEffect(() => {
+        if (apiKey && !isFetchingBenchmarks && !error) {
+            // If we haven't fetched OR year changed, fetch.
+            // Simplified: Just fetch when selectedYear changes.
+            // But we need to prevent infinite loop if fetch updates something in dependency array.
+            // roiHistory is updated by fetch. selectedYear is user controlled.
+            fetchPortfolioHistory();
+        }
+    }, [apiKey, selectedYear]);
 
     // --- Chart Logic ---
     const size = 300;
@@ -794,10 +1310,13 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
 
     return (
         <div className="p-8 pb-32 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
-            {/* Header */}
-            <div className="flex justify-between items-end border-b border-slate-200 dark:border-[#30363d] pb-6">
+            {/* Header: M1 Style */}
+            <div className="flex flex-col md:flex-row justify-between items-end border-b border-slate-200 dark:border-[#30363d] pb-6">
                 <div>
-                    <div className="flex items-center gap-2 mb-2 text-sm text-slate-400 font-bold">
+                    <h1 className="text-4xl font-light text-slate-800 dark:text-slate-100 tracking-tight mb-1">
+                        {currentProfile.name}'s Portfolio
+                    </h1>
+                    <div className="flex items-center gap-2 text-sm text-slate-400 font-bold">
                         {path.map((id, index) => {
                             const node = findNode(rootNode, id) || rootNode;
                             const isLast = index === path.length - 1;
@@ -805,7 +1324,7 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
                                 <React.Fragment key={id}>
                                     <button
                                         onClick={() => handleBreadcrumbClick(index)}
-                                        className={`hover:text-[#2A9D8F] transition-colors ${isLast ? 'text-slate-800 dark:text-white pointer-events-none' : ''}`}
+                                        className={`hover:text-[#2A9D8F] transition-colors ${isLast ? 'text-slate-500 dark:text-slate-400 pointer-events-none' : ''}`}
                                     >
                                         {node.name}
                                     </button>
@@ -813,34 +1332,27 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
                                 </React.Fragment>
                             );
                         })}
-                    </div>
-                    <div className="flex items-center gap-4">
                         {path.length > 1 && (
-                            <button onClick={handleNavigateUp} className="p-2 -ml-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                                <ArrowLeft size={24} />
+                            <button onClick={handleNavigateUp} className="p-1 -ml-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ml-2">
+                                <ArrowLeft size={16} />
                             </button>
                         )}
-                        <h1 className="text-4xl font-black text-slate-800 dark:text-white tracking-tight">{currentNode.name}</h1>
                     </div>
                 </div>
-                <div className="flex items-end gap-6">
-                    <button
-                        onClick={handleAnalyzeInvestments}
-                        disabled={isAnalyzing}
-                        className="group relative px-5 py-3 bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 text-white rounded-2xl font-bold shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 overflow-hidden"
-                    >
-                        <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-                        <div className="relative flex items-center gap-2">
-                            <div className="relative">
-                                <div className="absolute inset-0 bg-white blur-md opacity-40 animate-pulse rounded-full"></div>
-                                <Sparkles size={18} className={`relative z-10 ${isAnalyzing ? "animate-spin" : "animate-bounce"}`} />
-                            </div>
-                            <span>{isAnalyzing ? "Analyzing..." : "Expert Analysis"}</span>
-                        </div>
-                    </button>
+                <div className="flex gap-8 mt-6 md:mt-0">
                     <div className="text-right">
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Portfolio Value</p>
-                        <p className="text-3xl font-black text-slate-800 dark:text-white">${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Cash</div>
+                        <div className="text-xl font-bold text-slate-800 dark:text-white font-mono">${cashBalance.toLocaleString()}</div>
+                    </div>
+                    <div className="text-right">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Net Worth</div>
+                        <div className="text-xl font-bold text-slate-800 dark:text-white font-mono">${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    </div>
+                    <div className="text-right">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Day Change</div>
+                        <div className={`text-xl font-bold font-mono ${totalDayChange >= 0 ? 'text-[#2A9D8F]' : 'text-rose-500'}`}>
+                            {totalDayChange >= 0 ? '+' : ''}${Math.abs(totalDayChange).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -852,43 +1364,13 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
                 </div>
             )}
 
+            {/* Main Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                {/* Left Column: Visuals */}
-                <div className="lg:col-span-4 space-y-6">
-                    {/* Profit/Loss Card */}
-                    <div className="bg-white dark:bg-[#161b22] rounded-3xl p-6 border border-slate-200 dark:border-[#30363d] shadow-sm animate-in slide-in-from-bottom-2 duration-700">
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Performance</h3>
 
-                        {/* Mini Chart */}
-                        <div className="mb-6 -mx-2">
-                            <GainLossLineChart history={plHistory} />
-                        </div>
-
-                        <div className="space-y-4">
-                            <div>
-                                <p className="text-sm font-bold text-slate-500 mb-1">Net Profit / Loss</p>
-                                <div className={`text-4xl font-black tracking-tight ${profitLoss >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                    {profitLoss >= 0 ? '+' : ''}{profitLoss.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}
-                                </div>
-                                <div className={`text-sm font-bold mt-1 ${profitLoss >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                    {profitLoss >= 0 ? '▲' : '▼'} {Math.abs(roi).toFixed(2)}% Return
-                                </div>
-                            </div>
-
-                            <div className="pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-2">
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="font-bold text-slate-400">Invested Capital</span>
-                                    <span className="font-bold text-slate-700 dark:text-slate-200">${investedAmount.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="font-bold text-slate-400">Current Value</span>
-                                    <span className="font-bold text-slate-700 dark:text-slate-200">${totalPortfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="bg-white dark:bg-[#161b22] rounded-3xl p-6 border border-slate-200 dark:border-[#30363d] shadow-sm flex flex-col items-center justify-center relative min-h-[400px]">
+                {/* Left Column: Donut & Actions (4 cols) */}
+                <div className="lg:col-span-4 flex flex-col gap-6">
+                    {/* Donut Chart Container */}
+                    <div className="bg-white dark:bg-[#161b22] rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-[#30363d] relative min-h-[400px] flex flex-col items-center justify-center">
                         <div className="relative">
                             <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible drop-shadow-xl transform -rotate-90">
                                 {slices.map((slice, i) => (
@@ -896,476 +1378,654 @@ Be critical, specific, and data-driven. Reference the EXACT numbers provided abo
                                         key={i}
                                         d={slice.path}
                                         fill={slice.color}
-                                        className="transition-all duration-300 hover:scale-105 hover:z-10 cursor-pointer origin-center stroke-white dark:stroke-slate-900 stroke-[3px]"
+                                        className="transition-all duration-300 hover:scale-105 hover:z-10 cursor-pointer origin-center stroke-white dark:stroke-[#161b22] stroke-[4px]"
                                         onMouseEnter={() => setHoveredSlice(slice.data)}
                                         onMouseLeave={() => setHoveredSlice(null)}
                                     />
                                 ))}
                             </svg>
+                            {/* Center Text */}
                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                                 {hoveredSlice ? (
                                     <>
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{hoveredSlice.name}</span>
-                                        <span className="text-2xl font-black text-slate-800 dark:text-white mt-1">
-                                            ${hoveredSlice.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">{hoveredSlice.name}</div>
+                                        <div className="text-3xl font-bold text-slate-800 dark:text-white font-mono">${hoveredSlice.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                                        <div className="text-sm font-bold text-slate-500 mt-1">{hoveredSlice.actualPercent.toFixed(2)}%</div>
                                     </>
                                 ) : (
                                     <>
-                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{currentNode.type === 'PIE' ? 'Retirement' : 'Allocation'}</span>
-                                        <span className={`text-4xl font-black ${totalViewTarget !== 100 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
-                                            {totalViewTarget}%
-                                        </span>
+                                        <div className="text-3xl font-bold text-slate-800 dark:text-white font-mono">${totalPortfolioValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                                        <div className={`text-sm font-bold mt-1 ${profitLoss >= 0 ? 'text-[#2A9D8F]' : 'text-rose-500'}`}>
+                                            {profitLoss >= 0 ? '+' : ''}${Math.abs(profitLoss).toLocaleString()} ({roi.toFixed(2)}%)
+                                        </div>
                                     </>
                                 )}
                             </div>
                         </div>
-
-                        <div className="flex gap-4 w-full mt-8">
-                            <button
-                                onClick={fetchPrices}
-                                disabled={isLoading}
-                                className="flex-1 bg-slate-100 dark:bg-[#0d1117] text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-                            >
-                                <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />
-                                {isLoading ? "Syncing..." : "Sync Prices"}
-                            </button>
-                            <button
-                                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                                className="flex-1 bg-slate-100 dark:bg-[#0d1117] text-slate-600 dark:text-slate-300 py-3 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-                            >
-                                Settings
-                            </button>
-                        </div>
                     </div>
 
-                    {isSettingsOpen && (
-                        <div className="w-full mt-4 p-4 bg-slate-50 dark:bg-[#0d1117]/50 rounded-xl border border-slate-100 dark:border-slate-700 animate-in slide-in-from-top-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Finnhub API Key</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="password"
-                                    value={apiKey}
-                                    onChange={(e) => setApiKey(e.target.value)}
-                                    className="flex-1 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm"
-                                    placeholder="pk_..."
-                                />
-                                <button onClick={() => setIsSettingsOpen(false)} className="bg-[#2A9D8F] text-white px-3 rounded-lg"><Save size={16} /></button>
-                            </div>
-                        </div>
-                    )}
+                    {/* Action Buttons Row */}
+                    <div className="grid grid-cols-5 gap-2 px-1">
+                        {[
+                            { icon: <Plus size={20} />, label: 'Buy', action: () => setActiveModal('ADD_ITEM') },
+                            { icon: <Minus size={20} />, label: 'Sell', action: () => { } },
+                            { icon: <Scale size={20} />, label: 'Rebal', action: () => { } },
+                            { icon: <Edit2 size={20} />, label: 'Edit', action: () => setActiveModal('EDIT_PIE') },
+                            { icon: <Settings size={20} />, label: 'Settings', action: () => setIsAISettingsOpen(true) },
+                        ].map((btn, i) => (
+                            <button
+                                key={i}
+                                onClick={btn.action}
+                                className="flex flex-col items-center gap-2 group"
+                            >
+                                <div className="w-12 h-12 rounded-full bg-white dark:bg-[#21262d] border border-slate-200 dark:border-[#30363d] flex items-center justify-center text-slate-600 dark:text-slate-400 group-hover:bg-[#2A9D8F] group-hover:text-white group-hover:border-[#2A9D8F] transition-all shadow-sm">
+                                    {btn.icon}
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{btn.label}</span>
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
-                {/* Right Column: Ledger */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#161b22] rounded-3xl border border-slate-200 dark:border-[#30363d] shadow-sm overflow-hidden flex flex-col">
-                    <div className="p-6 border-b border-slate-100 dark:border-[#30363d] flex justify-between items-center bg-slate-50/50 dark:bg-[#0d1117]/20">
-                        <h3 className="font-bold text-lg text-slate-700 dark:text-slate-200">
-                            {currentNode.name === 'My Portfolio' ? 'Portfolio Slices' : `${currentNode.name} Holdings`}
-                        </h3>
-                        <button
-                            onClick={() => setActiveModal('ADD_ITEM')}
-                            className="bg-[#2A9D8F] hover:bg-[#218c7f] text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
-                        >
-                            <Plus size={16} /> Add {currentNode.id === 'root' ? 'Slice' : 'Holding'}
-                        </button>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead>
-                                <tr className="border-b border-slate-100 dark:border-[#30363d]">
-                                    <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider">Name / Symbol</th>
-                                    <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right">Value</th>
-                                    <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right">Actual %</th>
-                                    <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right w-32">Target %</th>
-                                    <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50 dark:divide-[#30363d]/50">
-                                {currentNode.id === 'root' && (
-                                    <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                                        <td className="p-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-500 text-white font-bold text-xs">
-                                                    <DollarSign size={16} />
-                                                </div>
-                                                <div>
-                                                    <div className="font-bold text-slate-700 dark:text-slate-200">Cash</div>
-                                                    <div className="text-[10px] text-slate-400">Uninvested Capital</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            <div className="flex items-center justify-end gap-1 font-bold text-slate-700 dark:text-slate-200">
-                                                <span>$</span>
-                                                <input
-                                                    type="number"
-                                                    value={cashBalance}
-                                                    onChange={(e) => setCashBalance(parseFloat(e.target.value) || 0)}
-                                                    className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-[#2A9D8F] transition-colors"
-                                                />
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-right font-mono text-sm text-slate-500">
-                                            {totalPortfolioValue > 0 ? ((cashBalance / totalPortfolioValue) * 100).toFixed(1) : '0.0'}%
-                                        </td>
-                                        <td className="p-4 text-right text-xs text-slate-400 italic">
-                                            -
-                                        </td>
-                                        <td className="p-4 text-center">
-                                            {/* No actions for cash */}
-                                        </td>
-                                    </tr>
-                                )}
-                                {childrenWithMetrics.map((child) => (
-                                    <tr
-                                        key={child.id}
-                                        className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group cursor-pointer"
-                                        onClick={() => child.type === 'PIE' ? handleNavigate(child.id) : null}
-                                    >
-                                        <td className="p-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs ${child.type === 'PIE' ? 'bg-indigo-500' : 'bg-slate-500'}`}>
-                                                    {child.type === 'PIE' ? <PieChart size={16} /> : child.name.substring(0, 2)}
-                                                </div>
-                                                <div>
-                                                    <div className="font-bold text-slate-700 dark:text-slate-200">{child.name}</div>
-                                                    {child.type === 'STOCK' && (
-                                                        <div className="text-[10px] text-slate-400">
-                                                            {child.shares.toLocaleString(undefined, { maximumFractionDigits: 3 })} shares @ ${child.avgCost.toFixed(2)}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-right font-bold text-slate-700 dark:text-slate-200">
-                                            ${child.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </td>
-                                        <td className="p-4 text-right font-mono text-sm text-slate-500">
-                                            {child.actualPercent.toFixed(1)}%
-                                        </td>
-                                        <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
-                                            <div className="flex items-center justify-end gap-2">
-                                                <input
-                                                    type="number"
-                                                    value={child.target}
-                                                    onChange={(e) => handleUpdateTarget(child.id, parseFloat(e.target.value))}
-                                                    className="bg-slate-100 dark:bg-[#0d1117] rounded-lg px-2 py-1 font-bold text-slate-700 dark:text-slate-200 w-16 text-right outline-none focus:ring-2 focus:ring-[#2A9D8F]"
-                                                />
-                                                <span className="text-xs text-slate-400">%</span>
-                                            </div>
-
-                                        </td>
-                                        <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                            <div className="flex justify-center gap-2">
-                                                {child.type === 'STOCK' && (
-                                                    <button
-                                                        onClick={() => { setActiveModal('TRANSACTIONS'); setSelectedNodeId(child.id); }}
-                                                        className="p-2 text-slate-400 hover:text-[#2A9D8F] transition-colors"
-                                                        title="Transaction History"
-                                                    >
-                                                        <History size={16} />
-                                                    </button>
-                                                )}
-                                                <button
-                                                    onClick={() => handleDeleteReference(child.id)}
-                                                    className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
+                {/* Right Column: Performance Chart (8 cols) */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#161b22] rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-[#30363d] min-h-[400px] flex flex-col">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Performance</h3>
+                        <div className="flex items-center gap-2">
+                            {/* Year Selector */}
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                className="bg-slate-100 dark:bg-[#21262d] text-slate-600 dark:text-slate-300 text-xs font-bold py-1 px-3 rounded-lg border-none outline-none cursor-pointer hover:bg-slate-200 dark:hover:bg-[#30363d] transition-colors"
+                            >
+                                {availableYears.map(y => (
+                                    <option key={y} value={y}>{y}</option>
                                 ))}
-                            </tbody>
-                        </table>
-                        {childrenWithMetrics.length === 0 && (
-                            <div className="p-12 flex flex-col items-center justify-center text-slate-400">
-                                <p className="font-medium">Empty Slice. Add a Stock or Pie.</p>
-                            </div>
-                        )}
+                            </select>
+
+                            <button
+                                onClick={() => fetchPortfolioHistory(selectedYear)}
+                                disabled={isFetchingBenchmarks}
+                                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
+                                title="Refresh Data"
+                            >
+                                <RefreshCw size={14} className={isFetchingBenchmarks ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+                    </div>
+                    <div className="flex-1">
+                        <PortfolioPerformanceChart
+                            plHistory={roiHistory}
+                            benchmarkData={benchmarkData}
+                            selectedYear={selectedYear}
+                        />
                     </div>
                 </div>
             </div>
 
-            {/* --- Modals --- */}
+            {/* Holdings Table (Full Width) */}
+            <div className="bg-white dark:bg-[#161b22] rounded-3xl border border-slate-200 dark:border-[#30363d] shadow-sm overflow-hidden flex flex-col mt-8">
+                <div className="p-6 border-b border-slate-100 dark:border-[#30363d] flex justify-between items-center bg-slate-50/50 dark:bg-[#0d1117]/20">
+                    <h3 className="font-bold text-lg text-slate-700 dark:text-slate-200">
+                        {currentNode.name === 'My Portfolio' ? 'Portfolio Slices' : `${currentNode.name} Holdings`}
+                    </h3>
+                    <button
+                        onClick={() => setActiveModal('ADD_ITEM')}
+                        className="bg-[#2A9D8F] hover:bg-[#218c7f] text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
+                    >
+                        <Plus size={16} /> Add {currentNode.id === 'root' ? 'Slice' : 'Holding'}
+                    </button>
+                </div>
 
-            <Modal
-                isOpen={isAIAnalysisOpen}
-                onClose={() => setIsAIAnalysisOpen(false)}
-                title="Expert Investment Analysis"
-            >
-                <div className="space-y-6">
-                    {!analysisResult && isAnalyzing ? (
-                        <div className="py-12 flex flex-col items-center justify-center space-y-4 text-center">
-                            <div className="relative">
-                                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse rounded-full"></div>
-                                <Sparkles size={48} className="text-indigo-500 animate-bounce relative z-10" />
-                            </div>
-                            <div>
-                                <h4 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Analyzing Portfolio...</h4>
-                                <p className="text-slate-500 dark:text-slate-400 text-sm max-w-xs mx-auto">
-                                    Our AI agents are reviewing your asset allocation, risk profile, and stock weighting.
-                                </p>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <div className="prose prose-sm dark:prose-invert max-w-none space-y-2 mb-6" dangerouslySetInnerHTML={{ __html: formatMarkdown(analysisResult) }} />
-
-                            <div className="flex gap-3 pt-4 border-t border-slate-100 dark:border-[#30363d]">
-                                <button
-                                    onClick={generateNewAnalysis}
-                                    disabled={isAnalyzing}
-                                    className="flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
-                                >
-                                    <RefreshCw size={16} className={isAnalyzing ? "animate-spin" : ""} />
-                                    Regenerate
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(analysisResult);
-                                    }}
-                                    className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                                    title="Copy to Clipboard"
-                                >
-                                    <Copy size={20} />
-                                </button>
-                            </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="border-b border-slate-100 dark:border-[#30363d]">
+                                <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider">Name / Symbol</th>
+                                <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right">Value</th>
+                                <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right">Actual %</th>
+                                <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-right w-32">Target %</th>
+                                <th className="p-4 text-xs font-black text-slate-400 uppercase tracking-wider text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50 dark:divide-[#30363d]/50">
+                            {currentNode.id === 'root' && (
+                                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                                    <td className="p-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-500 text-white font-bold text-xs">
+                                                <DollarSign size={16} />
+                                            </div>
+                                            <div>
+                                                <div className="font-bold text-slate-700 dark:text-slate-200">Cash</div>
+                                                <div className="text-[10px] text-slate-400">Uninvested Capital</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex items-center justify-end gap-1 font-bold text-slate-700 dark:text-slate-200">
+                                            <span>$</span>
+                                            <input
+                                                type="number"
+                                                value={cashBalance}
+                                                onChange={(e) => setCashBalance(parseFloat(e.target.value) || 0)}
+                                                className="w-24 bg-transparent text-right outline-none border-b border-transparent focus:border-[#2A9D8F] transition-colors"
+                                            />
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-right font-mono text-sm text-slate-500">
+                                        {totalPortfolioValue > 0 ? ((cashBalance / totalPortfolioValue) * 100).toFixed(1) : '0.0'}%
+                                    </td>
+                                    <td className="p-4 text-right text-xs text-slate-400 italic">
+                                        -
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        {/* No actions for cash */}
+                                    </td>
+                                </tr>
+                            )}
+                            {childrenWithMetrics.map(child => (
+                                <tr key={child.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                                    <td className="p-4">
+                                        <button
+                                            onClick={() => handleNavigateDown(child.id)}
+                                            className="flex items-center gap-3 w-full text-left"
+                                        >
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white ${child.type === 'PIE' ? 'bg-indigo-500' : 'bg-[#2A9D8F]'}`}>
+                                                {child.type === 'PIE' ? <PieChart size={16} /> : <TrendingUp size={16} />}
+                                            </div>
+                                            <div>
+                                                <div className="font-bold text-slate-700 dark:text-slate-200">{child.name}</div>
+                                                <div className="text-[10px] text-slate-400">{child.type === 'PIE' ? 'Slice' : `${child.shares.toFixed(2)} Shares`}</div>
+                                            </div>
+                                        </button>
+                                    </td>
+                                    <td className="p-4 text-right font-bold text-slate-700 dark:text-slate-200">
+                                        ${child.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="p-4 text-right font-mono text-sm text-slate-500">
+                                        {child.actualPercent.toFixed(2)}%
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <div className="flex items-center justify-end gap-2">
+                                            <div className="w-16 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full ${Math.abs(child.drift) > 5 ? 'bg-rose-400' : 'bg-[#2A9D8F]'}`}
+                                                    style={{ width: `${Math.min(child.target, 100)}%` }}
+                                                />
+                                            </div>
+                                            <span className="text-xs font-bold text-slate-600 dark:text-slate-400">{child.target}%</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            {child.type === 'STOCK' && (
+                                                <button
+                                                    onClick={() => { setActiveModal('TRANSACTIONS'); setSelectedNodeId(child.id); }}
+                                                    className="p-2 text-slate-400 hover:text-[#2A9D8F] transition-colors"
+                                                    title="Transaction History"
+                                                >
+                                                    <History size={16} />
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => handleDeleteReference(child.id)}
+                                                className="p-2 text-slate-300 hover:text-rose-500 transition-colors"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {childrenWithMetrics.length === 0 && (
+                        <div className="p-12 flex flex-col items-center justify-center text-slate-400">
+                            <p className="font-medium">Empty Slice. Add a Stock or Pie.</p>
                         </div>
                     )}
                 </div>
-            </Modal>
+            </div>
 
-            {isAISettingsOpen && (
-                <Modal
-                    isOpen={isAISettingsOpen}
-                    onClose={() => setIsAISettingsOpen(false)}
-                    title="AI Settings"
-                >
-                    <div className="space-y-6">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">AI Provider</label>
-                            <div className="grid grid-cols-3 gap-2">
-                                {['gemini', 'claude', 'openai'].map(p => (
+            {/* Floating Chat Button */}
+            <button
+                onClick={() => setIsAIAnalysisOpen(true)}
+                className="fixed bottom-8 right-8 z-40 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-2xl shadow-indigo-900/40 flex items-center justify-center transition-all hover:scale-110 active:scale-95 animate-in zoom-in duration-300"
+            >
+                <BadgeInfo size={24} />
+            </button>
+
+            {/* --- Modals --- */}
+
+            {/* AI Analysis — Chat Panel */}
+            {isAIAnalysisOpen && (
+                <div className="fixed inset-0 z-[60] flex items-stretch justify-end">
+                    {/* Backdrop */}
+                    <div
+                        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+                        onClick={() => setIsAIAnalysisOpen(false)}
+                    />
+
+                    {/* Chat Panel */}
+                    <div className="relative w-full max-w-lg flex flex-col bg-[#0d1117] border-l border-[#30363d] shadow-2xl animate-in slide-in-from-right duration-300 h-full">
+
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-[#30363d] shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
+                                    <Sparkles size={15} className="text-indigo-400" />
+                                </div>
+                                <div>
+                                    <div className="text-sm font-bold text-white leading-none">Investment Analysis</div>
+                                    <div className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-widest">
+                                        {aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'claude' ? 'Anthropic Claude' : 'OpenAI ChatGPT'}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                {analysisResult && (
+                                    <>
+                                        <button
+                                            onClick={() => { navigator.clipboard.writeText(analysisResult); alert('Analysis copied!'); }}
+                                            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all"
+                                            title="Copy analysis"
+                                        >
+                                            <Copy size={15} />
+                                        </button>
+                                        <button
+                                            onClick={generateNewAnalysis}
+                                            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all"
+                                            title="Regenerate"
+                                        >
+                                            <RefreshCw size={15} />
+                                        </button>
+                                    </>
+                                )}
+                                <button
+                                    onClick={() => setIsAIAnalysisOpen(false)}
+                                    className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all ml-1"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Message Thread */}
+                        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5 min-h-0 custom-scrollbar">
+                            {chatMessages.length === 0 && isAnalyzing && (
+                                <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+                                    {/* Initial loading state handled by isAnalyzing block below if we want, or just empty */}
+                                </div>
+                            )}
+
+                            {chatMessages.length === 0 && !isAnalyzing ? (
+                                /* Empty state */
+                                <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+                                    <div className="relative mb-5">
+                                        <div className="absolute inset-0 bg-indigo-500 blur-2xl opacity-10 rounded-full scale-150" />
+                                        <div className="relative w-14 h-14 rounded-2xl bg-indigo-600/15 border border-indigo-500/20 flex items-center justify-center">
+                                            <Sparkles size={24} className="text-indigo-400" />
+                                        </div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400">Ready to analyze</p>
                                     <button
-                                        key={p}
-                                        onClick={() => setAiProvider(p)}
-                                        className={`py-2 px-3 rounded-xl text-sm font-bold capitalize transition-all border-2 ${aiProvider === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' : 'border-transparent bg-slate-100 dark:bg-slate-800 text-slate-500'}`}
+                                        onClick={generateNewAnalysis}
+                                        className="mt-6 flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-indigo-900/30"
                                     >
-                                        {p}
+                                        <Sparkles size={14} />
+                                        Run Analysis
                                     </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">API Key for {aiProvider}</label>
-                            <div className="relative">
-                                <input
-                                    type="password"
-                                    value={aiApiKeys[aiProvider] || ''}
-                                    onChange={(e) => saveAPIKey(aiProvider, e.target.value)}
-                                    className="w-full bg-slate-100 dark:bg-[#0d1117] border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 font-mono text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                                    placeholder={`Enter your ${aiProvider} API key...`}
-                                />
-                            </div>
-                            <p className="text-[10px] text-slate-400 mt-2">
-                                Your key is stored locally in your browser and never sent to our servers.
-                            </p>
-                        </div>
-                        <button
-                            onClick={() => setIsAISettingsOpen(false)}
-                            className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold hover:opacity-90 transition-opacity"
-                        >
-                            Save & Close
-                        </button>
-                    </div>
-                </Modal>
-            )}
-
-            {activeModal === 'ADD_ITEM' && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-[#161b22] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-slate-200 dark:border-[#30363d]">
-                        <h2 className="text-2xl font-black mb-6">Add to {currentNode.name}</h2>
-                        <form onSubmit={(e) => {
-                            e.preventDefault();
-                            const formData = new FormData(e.target);
-                            handleAddItem({
-                                type: formData.get('type'),
-                                name: formData.get('name'),
-                                target: formData.get('target')
-                            });
-                        }}>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Item Type</label>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <label className="cursor-pointer">
-                                            <input type="radio" name="type" value="STOCK" defaultChecked className="peer sr-only" />
-                                            <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:bg-[#2A9D8F] peer-checked:text-white peer-checked:border-transparent text-center font-bold transition-all">Stock / ETF</div>
-                                        </label>
-                                        <label className="cursor-pointer">
-                                            <input type="radio" name="type" value="PIE" className="peer sr-only" />
-                                            <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:bg-indigo-500 peer-checked:text-white peer-checked:border-transparent text-center font-bold transition-all">Sub-Pie</div>
-                                        </label>
-                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Name / Symbol</label>
-                                    <input name="name" required placeholder="e.g. AAPL or Tech Sector" className="w-full bg-slate-50 dark:bg-[#0d1117] p-3 rounded-xl outline-none focus:ring-2 focus:ring-[#2A9D8F] font-bold" />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Target %</label>
-                                    <input name="target" type="number" required placeholder="10" className="w-full bg-slate-50 dark:bg-[#0d1117] p-3 rounded-xl outline-none focus:ring-2 focus:ring-[#2A9D8F] font-bold" />
-                                </div>
-                                <div className="flex gap-3 mt-6">
-                                    <button type="button" onClick={() => setActiveModal(null)} className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors">Cancel</button>
-                                    <button type="submit" className="flex-1 py-3 font-bold bg-[#2A9D8F] text-white rounded-xl shadow-lg shadow-teal-900/20 hover:bg-[#218c7f]">Add Item</button>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {activeModal === 'TRANSACTIONS' && selectedNodeId && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-[#161b22] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-slate-200 dark:border-[#30363d] max-h-[80vh] flex flex-col">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-black">History: {(findNode(rootNode, selectedNodeId) || {}).name}</h2>
-                            <button onClick={() => { setActiveModal(null); setEditingTransaction(null); }} className="p-2 hover:bg-slate-100 rounded-full"><Trash2 size={1} /> <span className="text-2xl">&times;</span></button>
-                        </div>
-
-                        {/* List existing transactions */}
-                        <div className="flex-1 overflow-y-auto mb-6 space-y-2 pr-2 custom-scrollbar">
-                            {((findNode(rootNode, selectedNodeId) || {}).transactions || []).length === 0 ? (
-                                <p className="text-slate-400 text-center py-4">No transactions recorded.</p>
                             ) : (
-                                ((findNode(rootNode, selectedNodeId) || {}).transactions || []).sort((a, b) => new Date(b.date) - new Date(a.date)).map(t => (
-                                    <div key={t.id} className={`flex justify-between items-center p-3 rounded-xl border ${editingTransaction?.id === t.id ? 'bg-indigo-50 border-indigo-200 dark:bg-indigo-900/20 dark:border-indigo-800' : 'bg-slate-50 border-transparent dark:bg-[#0d1117]'}`}>
-                                        <div>
-                                            <div className="font-bold text-sm text-slate-700 dark:text-slate-200">{t.type} {t.shares.toLocaleString(undefined, { maximumFractionDigits: 3 })} shares</div>
-                                            <div className="text-xs text-slate-400">{t.date}</div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <div className="text-right">
-                                                <div className="font-bold text-sm">${(t.shares * t.price).toFixed(2)}</div>
-                                                <div className="text-xs text-slate-400">@ ${t.price}</div>
+                                <>
+                                    {chatMessages.map((msg, i) =>
+                                        msg.role === 'user' ? (
+                                            /* User bubble — right aligned */
+                                            <div key={i} className="flex justify-end">
+                                                <div className="max-w-[80%]">
+                                                    <div className="bg-[#2d333b] border border-[#444c56] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm text-slate-200 leading-relaxed">
+                                                        {msg.content}
+                                                    </div>
+                                                    <div className="flex justify-end mt-1 mr-1">
+                                                        <span className="text-[10px] text-slate-600">{msg.timestamp}</span>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div className="flex gap-1">
-                                                <button
-                                                    onClick={() => setEditingTransaction(t)}
-                                                    className="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
-                                                >
-                                                    <MoreHorizontal size={14} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteTransaction(selectedNodeId, t.id)}
-                                                    className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+                                        ) : (
+                                            /* AI bubble — left aligned */
+                                            <div key={i} className="flex items-start gap-3">
+                                                <div className="w-7 h-7 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <Sparkles size={13} className="text-indigo-400" />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl rounded-tl-sm px-5 py-4">
+                                                        <div
+                                                            className="prose prose-sm prose-invert max-w-none text-slate-300 leading-relaxed [&_strong]:text-white [&_h1]:text-white [&_h2]:text-white [&_h3]:text-slate-100 [&_li]:text-slate-300 [&_ul]:pl-4 [&_ol]:pl-4"
+                                                            dangerouslySetInnerHTML={{ __html: formatMarkdown(msg.content) }}
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center gap-1 mt-1.5 ml-1">
+                                                        <span className="text-[10px] text-slate-600">
+                                                            {aiProvider === 'gemini' ? 'Gemini' : aiProvider === 'claude' ? 'Claude' : 'ChatGPT'}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-700">·</span>
+                                                        <span className="text-[10px] text-slate-600">{msg.timestamp}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )
+                                    )}
+
+                                    {/* Typing indicator */}
+                                    {isAnalyzing && (
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-7 h-7 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                                                <Sparkles size={13} className="text-indigo-400" />
+                                            </div>
+                                            <div className="bg-[#161b22] border border-[#30363d] rounded-2xl rounded-tl-sm px-4 py-3.5">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                    <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-2">Analyzing...</p>
                                             </div>
                                         </div>
-                                    </div>
-                                ))
+                                    )}
+                                </>
                             )}
                         </div>
 
-                        {/* Add/Edit Transaction Form */}
-                        <form onSubmit={(e) => {
-                            e.preventDefault();
-                            const fd = new FormData(e.target);
-                            const transactionData = {
-                                type: fd.get('type'),
-                                date: fd.get('date'),
-                                shares: fd.get('shares'),
-                                price: fd.get('price')
-                            };
-
-                            if (editingTransaction) {
-                                handleUpdateTransaction(selectedNodeId, editingTransaction.id, transactionData);
-                                setEditingTransaction(null);
-                            } else {
-                                handleAddTransaction(selectedNodeId, transactionData);
-                            }
-                            e.target.reset();
-                        }} className="pt-6 border-t border-slate-100 dark:border-[#30363d]">
-                            <div className="flex justify-between items-center mb-4">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                    {editingTransaction ? 'Edit Transaction' : 'Add Transaction'}
-                                </h4>
-                                {editingTransaction && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setEditingTransaction(null)}
-                                        className="text-xs font-bold text-rose-500 hover:underline"
-                                    >
-                                        Cancel Edit
-                                    </button>
-                                )}
+                        {/* Chat Input Bar */}
+                        <div className="px-4 pb-5 pt-3 border-t border-[#30363d] shrink-0">
+                            <div className="relative flex items-end gap-2 bg-[#161b22] border border-[#30363d] rounded-2xl px-4 py-3 focus-within:border-indigo-500/50 transition-colors">
+                                <textarea
+                                    value={followUpQuestion}
+                                    onChange={(e) => { setFollowUpQuestion(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'; }}
+                                    placeholder={analysisResult ? "Ask a follow-up question..." : "Ask about your portfolio..."}
+                                    className="flex-1 bg-transparent border-none outline-none text-sm text-slate-200 placeholder:text-slate-600 resize-none leading-relaxed min-h-[22px] max-h-[120px] overflow-y-auto"
+                                    rows={1}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            if (followUpQuestion.trim()) {
+                                                handleAskFollowUp();
+                                            } else {
+                                                generateNewAnalysis();
+                                            }
+                                        }
+                                    }}
+                                />
+                                <button
+                                    onClick={() => followUpQuestion.trim() ? handleAskFollowUp() : generateNewAnalysis()}
+                                    disabled={isAnalyzing}
+                                    className="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-all shadow-lg shadow-indigo-900/30 shrink-0 self-end"
+                                >
+                                    {isAnalyzing
+                                        ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+                                    }
+                                </button>
                             </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Type</label>
-                                    <select
-                                        name="type"
-                                        defaultValue={editingTransaction?.type || "BUY"}
-                                        key={editingTransaction?.id || 'new-type'} // Force re-render on state change
-                                        className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
-                                    >
-                                        <option value="BUY">Buy</option>
-                                        <option value="SELL">Sell</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Date</label>
-                                    <input
-                                        name="date"
-                                        type="date"
-                                        required
-                                        defaultValue={editingTransaction?.date || new Date().toISOString().split('T')[0]}
-                                        key={editingTransaction?.id || 'new-date'}
-                                        className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Shares</label>
-                                    <input
-                                        name="shares"
-                                        type="number"
-                                        step="any"
-                                        required
-                                        placeholder="0"
-                                        defaultValue={editingTransaction?.shares || ''}
-                                        key={editingTransaction?.id || 'new-shares'}
-                                        className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Price / Share</label>
-                                    <input
-                                        name="price"
-                                        type="number"
-                                        step="any"
-                                        required
-                                        placeholder="0.00"
-                                        defaultValue={editingTransaction?.price || ''}
-                                        key={editingTransaction?.id || 'new-price'}
-                                        className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
-                                    />
-                                </div>
-                            </div>
-                            <button type="submit" className={`w-full mt-4 py-3 font-bold text-white rounded-xl transition-all ${editingTransaction ? 'bg-indigo-500 hover:bg-indigo-600' : 'bg-slate-900 dark:bg-slate-700 hover:bg-slate-800'}`}>
-                                {editingTransaction ? 'Update Transaction' : 'Add Record'}
-                            </button>
-                        </form>
+                            <p className="text-[10px] text-slate-700 mt-2 text-center">Enter to send · Shift+Enter for new line</p>
+                        </div>
                     </div>
                 </div>
             )}
-        </div>
+
+            {
+                isAISettingsOpen && (
+                    <Modal
+                        isOpen={isAISettingsOpen}
+                        onClose={() => setIsAISettingsOpen(false)}
+                        title="Portfolio Settings"
+                    >
+                        <div className="space-y-6">
+                            {/* Finnhub API Key Section */}
+                            <div className="pb-6 border-b border-slate-100 dark:border-slate-800">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Finnhub API Key (Data Source)</label>
+                                <div className="relative">
+                                    <input
+                                        type="password"
+                                        value={apiKey || ''}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        className="w-full bg-slate-100 dark:bg-[#0d1117] border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 font-mono text-sm outline-none focus:ring-2 focus:ring-[#2A9D8F] transition-all"
+                                        placeholder="Enter your Finnhub API key..."
+                                    />
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-2">
+                                    Required for real-time stock prices and dividends. Get your free key from the <a href="https://finnhub.io/dashboard" target="_blank" rel="noreferrer" className="text-[#2A9D8F] hover:underline">Finnhub Dashboard</a>.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">AI Provider</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {['gemini', 'claude', 'openai'].map(p => (
+                                        <button
+                                            key={p}
+                                            onClick={() => setAiProvider(p)}
+                                            className={`py-2 px-3 rounded-xl text-sm font-bold capitalize transition-all border-2 ${aiProvider === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' : 'border-transparent bg-slate-100 dark:bg-slate-800 text-slate-500'}`}
+                                        >
+                                            {p}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">API Key for {aiProvider}</label>
+                                <div className="relative">
+                                    <input
+                                        type="password"
+                                        value={aiApiKeys[aiProvider] || ''}
+                                        onChange={(e) => saveAPIKey(aiProvider, e.target.value)}
+                                        className="w-full bg-slate-100 dark:bg-[#0d1117] border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 font-mono text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                        placeholder={`Enter your ${aiProvider} API key...`}
+                                    />
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-2">
+                                    Your key is stored locally in your browser and never sent to our servers.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setIsAISettingsOpen(false)}
+                                className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-3 rounded-xl font-bold hover:opacity-90 transition-opacity"
+                            >
+                                Save & Close
+                            </button>
+                        </div>
+                    </Modal>
+                )
+            }
+
+            {
+                activeModal === 'ADD_ITEM' && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-[#161b22] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-slate-200 dark:border-[#30363d]">
+                            <h2 className="text-2xl font-black mb-6">Add to {currentNode.name}</h2>
+                            <form onSubmit={(e) => {
+                                e.preventDefault();
+                                const formData = new FormData(e.target);
+                                handleAddItem({
+                                    type: formData.get('type'),
+                                    name: formData.get('name'),
+                                    target: formData.get('target')
+                                });
+                            }}>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Item Type</label>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <label className="cursor-pointer">
+                                                <input type="radio" name="type" value="STOCK" defaultChecked className="peer sr-only" />
+                                                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:bg-[#2A9D8F] peer-checked:text-white peer-checked:border-transparent text-center font-bold transition-all">Stock / ETF</div>
+                                            </label>
+                                            <label className="cursor-pointer">
+                                                <input type="radio" name="type" value="PIE" className="peer sr-only" />
+                                                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 peer-checked:bg-indigo-500 peer-checked:text-white peer-checked:border-transparent text-center font-bold transition-all">Sub-Pie</div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Ticker Symbol (e.g. AAPL)</label>
+                                        <input name="name" required placeholder="AAPL" className="w-full bg-slate-50 dark:bg-[#0d1117] p-3 rounded-xl outline-none focus:ring-2 focus:ring-[#2A9D8F] font-bold uppercase placeholder:normal-case" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Target %</label>
+                                        <input name="target" type="number" required placeholder="10" className="w-full bg-slate-50 dark:bg-[#0d1117] p-3 rounded-xl outline-none focus:ring-2 focus:ring-[#2A9D8F] font-bold" />
+                                    </div>
+                                    <div className="flex gap-3 mt-6">
+                                        <button type="button" onClick={() => setActiveModal(null)} className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors">Cancel</button>
+                                        <button type="submit" className="flex-1 py-3 font-bold bg-[#2A9D8F] text-white rounded-xl shadow-lg shadow-teal-900/20 hover:bg-[#218c7f]">Add Item</button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )
+            }
+
+            {
+                activeModal === 'TRANSACTIONS' && selectedNodeId && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-[#161b22] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-slate-200 dark:border-[#30363d] max-h-[80vh] flex flex-col">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-2xl font-black">History: {(findNode(rootNode, selectedNodeId) || {}).name}</h2>
+                                <button onClick={() => { setActiveModal(null); setEditingTransaction(null); }} className="p-2 hover:bg-slate-100 rounded-full"><Trash2 size={1} /> <span className="text-2xl">&times;</span></button>
+                            </div>
+
+                            {/* List existing transactions */}
+                            <div className="flex-1 overflow-y-auto mb-6 space-y-2 pr-2 custom-scrollbar">
+                                {((findNode(rootNode, selectedNodeId) || {}).transactions || []).length === 0 ? (
+                                    <p className="text-slate-400 text-center py-4">No transactions recorded.</p>
+                                ) : (
+                                    ((findNode(rootNode, selectedNodeId) || {}).transactions || []).sort((a, b) => new Date(b.date) - new Date(a.date)).map(t => (
+                                        <div key={t.id} className={`flex justify-between items-center p-3 rounded-xl border ${editingTransaction?.id === t.id ? 'bg-indigo-50 border-indigo-200 dark:bg-indigo-900/20 dark:border-indigo-800' : 'bg-slate-50 border-transparent dark:bg-[#0d1117]'}`}>
+                                            <div>
+                                                <div className="font-bold text-sm text-slate-700 dark:text-slate-200">{t.type} {t.shares.toLocaleString(undefined, { maximumFractionDigits: 3 })} shares</div>
+                                                <div className="text-xs text-slate-400">{t.date}</div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="text-right">
+                                                    <div className="font-bold text-sm">${(t.shares * t.price).toFixed(2)}</div>
+                                                    <div className="text-xs text-slate-400">@ ${t.price}</div>
+                                                </div>
+                                                <div className="flex gap-1">
+                                                    <button
+                                                        onClick={() => setEditingTransaction(t)}
+                                                        className="p-1.5 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
+                                                    >
+                                                        <MoreHorizontal size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteTransaction(selectedNodeId, t.id)}
+                                                        className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-lg transition-colors"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+
+                            {/* Add/Edit Transaction Form */}
+                            <form onSubmit={(e) => {
+                                e.preventDefault();
+                                const fd = new FormData(e.target);
+                                const transactionData = {
+                                    type: fd.get('type'),
+                                    date: fd.get('date'),
+                                    shares: fd.get('shares'),
+                                    price: fd.get('price')
+                                };
+
+                                if (editingTransaction) {
+                                    handleUpdateTransaction(selectedNodeId, editingTransaction.id, transactionData);
+                                    setEditingTransaction(null);
+                                } else {
+                                    handleAddTransaction(selectedNodeId, transactionData);
+                                }
+                                e.target.reset();
+                            }} className="pt-6 border-t border-slate-100 dark:border-[#30363d]">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                        {editingTransaction ? 'Edit Transaction' : 'Add Transaction'}
+                                    </h4>
+                                    {editingTransaction && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditingTransaction(null)}
+                                            className="text-xs font-bold text-rose-500 hover:underline"
+                                        >
+                                            Cancel Edit
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Type</label>
+                                        <select
+                                            name="type"
+                                            defaultValue={editingTransaction?.type || "BUY"}
+                                            key={editingTransaction?.id || 'new-type'} // Force re-render on state change
+                                            className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
+                                        >
+                                            <option value="BUY">Buy</option>
+                                            <option value="SELL">Sell</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Date</label>
+                                        <input
+                                            name="date"
+                                            type="date"
+                                            required
+                                            defaultValue={editingTransaction?.date || new Date().toISOString().split('T')[0]}
+                                            key={editingTransaction?.id || 'new-date'}
+                                            className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Shares</label>
+                                        <input
+                                            name="shares"
+                                            type="number"
+                                            step="any"
+                                            required
+                                            placeholder="0"
+                                            defaultValue={editingTransaction?.shares || ''}
+                                            key={editingTransaction?.id || 'new-shares'}
+                                            className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Price / Share</label>
+                                        <input
+                                            name="price"
+                                            type="number"
+                                            step="any"
+                                            required
+                                            placeholder="0.00"
+                                            defaultValue={editingTransaction?.price || ''}
+                                            key={editingTransaction?.id || 'new-price'}
+                                            className="w-full bg-slate-50 dark:bg-[#0d1117] p-2 rounded-lg font-bold outline-none"
+                                        />
+                                    </div>
+                                </div>
+                                <button type="submit" className={`w-full mt-4 py-3 font-bold text-white rounded-xl transition-all ${editingTransaction ? 'bg-indigo-500 hover:bg-indigo-600' : 'bg-slate-900 dark:bg-slate-700 hover:bg-slate-800'}`}>
+                                    {editingTransaction ? 'Update Transaction' : 'Add Record'}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 };
 
